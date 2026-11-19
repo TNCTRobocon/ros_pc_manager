@@ -104,6 +104,15 @@ launch設定ファイルが存在しない場合は `launches: []` の空設定�
 
 親PC自身も管理対象に含める場合は、親PCのWeb画面で親PC自身を登録し、親PC上でも `setup_agent_service.sh` を実行してください。Manager ServerとAgentは別サービスとして動作します。
 
+## [管理パスワード]を表示
+
+親PC上で実行してください。
+
+~~~bash
+cd ~/ros_pc_manager
+cat var/admin_password.txt
+~~~
+
 ## ROSbagの動作
 
 - 記録プロセスは親PC上で1つだけ動作します。
