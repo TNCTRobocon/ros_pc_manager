@@ -1,0 +1,29 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+  agent_timeout_seconds: 3.0
+
+security:
+  # Leave empty to generate a random password in the data directory on first start.
+  admin_password: ""
+
+paths:
+  data_root: var
+  database: var/manager.sqlite3
+  rosbag_root: var/rosbags
+  rosbag_state: var/rosbag_state.json
+  log_root: var/logs
+
+ros:
+  setup: /opt/ros/jazzy/setup.bash
+  # Add workspace install/setup.bash parent paths here if custom message types
+  # are required to deserialize/record topics.
+  overlays: []
+
+limits:
+  # New recordings are rejected below minimum_free_gb.
+  minimum_free_gb: 5.0
+  # The Web UI shows a warning below warning_free_gb.
+  warning_free_gb: 10.0
+
+domains_file: config/domains.yaml

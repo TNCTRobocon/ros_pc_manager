@@ -1,0 +1,5 @@
+# Domain IDs available in the ROSbag selector.
+# IDs from registered PCs and their launch YAML files are added automatically.
+domains:
+  - id: 32
+    name: Robocon LAN

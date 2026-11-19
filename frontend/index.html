@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101827">
+  <title>ROS PC Manager</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header id="appHeader" class="app-header hidden">
+    <div class="brand">ROS PC Manager</div>
+    <nav class="top-nav">
+      <button id="navHosts" class="nav-button active">PC一覧</button>
+      <button id="navRosbag" class="nav-button">ROSbag</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="loginPage" class="page login-page">
+      <div class="panel">
+        <h1>ROS PC Manager</h1>
+        <p class="muted">管理パスワードを入力してください。</p>
+        <form id="loginForm" class="form-grid">
+          <label class="span-all">管理パスワード
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary-button span-all" type="submit">ログイン</button>
+        </form>
+        <div id="loginMessage" class="inline-message" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section id="hostsPage" class="page hidden">
+      <div class="page-heading">
+        <div>
+          <h1>登録済みPC</h1>
+          <p class="muted">同一LAN内のROS 2 PCを管理します。</p>
+        </div>
+      </div>
+      <div id="hostCards" class="host-grid">
+        <div class="empty-card">登録済みPCはありません。</div>
+      </div>
+
+      <section class="panel register-panel">
+        <h2>PCを登録</h2>
+        <form id="registerForm" class="form-grid">
+          <label>表示名
+            <input name="name" required maxlength="80" placeholder="robot-a">
+          </label>
+          <label>IPアドレス
+            <input name="address" required inputmode="decimal" placeholder="192.168.1.20">
+          </label>
+          <label>Agentポート
+            <input name="port" type="number" min="1" max="65535" value="8765" required>
+          </label>
+          <label>デフォルトDomain ID
+            <input name="domain_id" type="number" min="0" max="232" value="32" required>
+          </label>
+          <button class="primary-button span-all" type="submit">PCを登録</button>
+        </form>
+        <div id="registrationResult" class="notice hidden"></div>
+      </section>
+    </section>
+
+    <section id="controlPage" class="page hidden">
+      <div class="page-heading">
+        <button id="backToHosts" class="secondary-button">← PC一覧</button>
+        <button id="detailsButton" class="secondary-button">詳細表示</button>
+      </div>
+
+      <section class="panel host-summary">
+        <div>
+          <div id="controlHostName" class="host-name">-</div>
+          <div id="controlHostAddress" class="muted">-</div>
+        </div>
+        <div class="summary-state">
+          <div id="controlHostStatus" class="status-pill unknown">UNKNOWN</div>
+          <div class="domain-label">Domain ID <strong id="controlDomainId">-</strong></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>launch管理</h2>
+          <span id="launchCount" class="muted">-</span>
+        </div>
+        <label class="field-label" for="launchSelect">起動・停止するlaunch</label>
+        <select id="launchSelect" class="large-select">
+          <option value="">読み込み中...</option>
+        </select>
+        <div class="button-row launch-actions">
+          <button id="launchStart" class="primary-button large-action">起動</button>
+          <button id="launchStop" class="danger-button large-action">停止</button>
+        </div>
+        <p class="help-text">● 実行中 / ○ 停止中 / ◐ 起動中 / ◌ 停止処理中 / ! エラー。状態管理・一括停止の対象は管理Agentが起動したlaunchのみです。端末から直接起動したlaunchは実行中として表示しません。</p>
+        <div id="launchMessage" class="inline-message" aria-live="polite"></div>
+      </section>
+
+      <section id="bagPanel" class="panel">
+        <div class="section-title">
+          <h2>ROSbag管理</h2>
+          <span class="muted">親PCに記録</span>
+        </div>
+        <label class="field-label" for="bagDomain">記録対象Domain ID</label>
+        <select id="bagDomain" class="large-select"></select>
+        <div class="topic-heading">
+          <span class="field-label">記録対象トピック</span>
+          <button id="refreshTopics" class="small-button">トピック更新</button>
+        </div>
+        <div id="selectedTopicChips" class="topic-chips">
+          <span class="muted">トピック未選択</span>
+        </div>
+        <details id="topicPicker" class="topic-picker">
+          <summary>トピックを選択・変更</summary>
+          <div class="topic-picker-body">
+            <div class="button-row compact-row">
+              <button id="selectAllTopics" class="small-button">全選択</button>
+              <button id="clearAllTopics" class="small-button">全解除</button>
+            </div>
+            <div id="topicList" class="topic-list">
+              <div class="muted">Domain IDを選択してトピックを更新してください。</div>
+            </div>
+          </div>
+        </details>
+        <div id="topicCount" class="muted topic-count">選択中：0 topics</div>
+        <div id="bagStatus" class="bag-status stopped">● STOPPED</div>
+        <div id="bagPath" class="help-text">保存先：親PC</div>
+        <div id="bagStorage" class="storage-status" aria-live="polite">空き容量を確認しています...</div>
+        <div class="button-row bag-actions">
+          <button id="bagStart" class="primary-button large-action">記録開始</button>
+          <button id="bagStop" class="danger-button large-action">記録停止</button>
+        </div>
+        <div id="bagMessage" class="inline-message" aria-live="polite"></div>
+      </section>
+
+      <button id="shutdownButton" class="shutdown-button">シャットダウン</button>
+    </section>
+
+    <section id="detailsPage" class="page hidden">
+      <div class="page-heading">
+        <button id="backToControl" class="secondary-button">← 操作画面</button>
+        <h1 id="detailTitle">PC詳細</h1>
+      </div>
+      <section class="panel">
+        <h2>基本情報</h2>
+        <dl id="basicInfo" class="detail-grid"></dl>
+      </section>
+      <section class="panel">
+        <h2>ROS 2ノード一覧</h2>
+        <div id="nodeList" class="node-list"><span class="muted">読み込み中...</span></div>
+      </section>
+      <section class="panel">
+        <h2>システム詳細</h2>
+        <dl id="systemInfo" class="detail-grid"></dl>
+      </section>
+      <section class="panel">
+        <h2>ROSbag</h2>
+        <dl id="detailRosbagInfo" class="detail-grid"></dl>
+      </section>
+    </section>
+
+    <section id="rosbagPage" class="page hidden">
+      <div class="page-heading">
+        <h1>ROSbag管理</h1>
+        <p class="muted">親PCが指定Domain IDのDDS通信を記録します。</p>
+      </div>
+      <div id="globalBagInfo" class="panel"></div>
+      <button id="backToHostsFromBag" class="secondary-button">PC一覧へ戻る</button>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

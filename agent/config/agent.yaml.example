@@ -1,0 +1,13 @@
+agent:
+  name: robot-a
+  host: 0.0.0.0
+  port: 8765
+  # Copy the one-time token shown when this PC is registered in the manager UI.
+  token: REPLACE_WITH_MANAGER_TOKEN
+  ros_setup: /opt/ros/jazzy/setup.bash
+  default_domain_id: 32
+
+paths:
+  launches_file: launches.yaml
+  state_file: ~/.local/state/ros-pc-manager/launches.json
+  log_root: ~/.local/state/ros-pc-manager/logs

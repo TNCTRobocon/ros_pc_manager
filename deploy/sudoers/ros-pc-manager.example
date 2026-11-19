@@ -1,0 +1,3 @@
+# Replace __AGENT_USER__ with the Linux account that runs pc-manager-agent.
+# Install as /etc/sudoers.d/ros-pc-manager with mode 0440 using visudo.
+__AGENT_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff

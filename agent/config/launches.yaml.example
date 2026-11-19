@@ -1,0 +1,16 @@
+launches:
+  - id: enemyrobot_bringup
+    display_name: "敵ロボット全体起動"
+    workspace: /home/user/enemyrobot26_ws
+    package: enemyrobot_bringup
+    launch_file: bringup.launch.py
+    ros_domain_id: 32
+    arguments: {}
+
+  - id: camera_bringup
+    display_name: "カメラ起動"
+    workspace: /home/user/enemyrobot26_ws
+    package: camera_driver
+    launch_file: camera.launch.py
+    ros_domain_id: 32
+    arguments: {}

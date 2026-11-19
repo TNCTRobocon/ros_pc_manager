@@ -1,0 +1,20 @@
+[Unit]
+Description=ROS PC Manager Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_GROUP__
+WorkingDirectory=__PROJECT_ROOT__
+ExecStart=__PROJECT_ROOT__/.venv/bin/ros-pc-manager-agent --config /etc/ros-pc-manager/agent.yaml
+Restart=on-failure
+# Managed launch processes must survive an Agent service restart.
+# LaunchManager restores ownership by PID + /proc start time after restart.
+KillMode=process
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
