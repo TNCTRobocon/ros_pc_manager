@@ -23,6 +23,7 @@ from .hosts_yaml import HostsYamlExporter
 from .rosbag_manager import RosbagManager
 
 SESSION_TTL_SECONDS = 12 * 60 * 60
+SHUTDOWN_STATUS_GRACE_SECONDS = 180
 
 
 class LoginRequest(BaseModel):
@@ -88,7 +89,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # a previous export failure cannot leave stale registration data.
     hosts_yaml_exporter.sync(database.list_hosts())
     rosbag_manager = RosbagManager(settings)
-    sessions: dict[str, float] = {}
     app = FastAPI(title="ROS PC Manager", version="0.2.0")
     frontend_dir = settings.project_root / "frontend"
     app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
@@ -98,11 +98,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path = request.url.path
         if path.startswith("/api/") and path not in {"/api/login", "/api/health"}:
             token = request.headers.get("X-Manager-Session", "")
-            expires_at = sessions.get(token, 0.0)
-            if not token or expires_at <= time.time():
-                sessions.pop(token, None)
-                return JSONResponse(status_code=401, content={"detail": "Login required"})
-        return await call_next(request)
+            if not token or database.get_session_expiry(token) is None:
+                response = JSONResponse(
+                    status_code=401,
+                    content={"detail": "Login required"},
+                )
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+                return response
+
+        response = await call_next(request)
+        if path.startswith("/api/") or path == "/" or path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
     def sync_hosts_yaml() -> None:
         try:
@@ -128,6 +139,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             host["token"],
             settings.agent_timeout_seconds,
         )
+
+    async def read_agent_status(host_id: int) -> dict[str, Any]:
+        stored = database.get_host(host_id)
+        if not stored:
+            raise HTTPException(status_code=404, detail="PC is not registered")
+        status = await client_for(host_id).status()
+        system = status.get("system", {})
+        requested_at = stored.get("shutdown_requested_at")
+        requested_boot = stored.get("shutdown_boot_time")
+        host_state = "ONLINE"
+
+        if requested_at is not None:
+            current_boot = system.get("boot_time")
+            rebooted = (
+                requested_boot is not None
+                and current_boot is not None
+                and float(current_boot) > float(requested_boot) + 1.0
+            )
+            grace_expired = time.time() - float(requested_at) >= SHUTDOWN_STATUS_GRACE_SECONDS
+            if rebooted or grace_expired:
+                database.clear_shutdown_requested(host_id)
+                host_state = "ONLINE"
+            else:
+                host_state = "SHUTTING_DOWN"
+
+        return {**status, "host_status": host_state}
 
     def agent_error(exc: Exception, context: str) -> HTTPException:
         status_code = 502
@@ -156,17 +193,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not hmac.compare_digest(body.password, settings.admin_password):
             raise HTTPException(status_code=401, detail="パスワードが正しくありません")
         token = secrets.token_urlsafe(32)
-        sessions[token] = time.time() + SESSION_TTL_SECONDS
+        expires_at = time.time() + SESSION_TTL_SECONDS
+        database.create_session(token, expires_at)
         return {"ok": True, "session_token": token, "expires_in": SESSION_TTL_SECONDS}
 
     @app.get("/api/session")
-    async def session():
-        return {"authenticated": True, "expires_in": SESSION_TTL_SECONDS}
+    async def session(request: Request):
+        token = request.headers.get("X-Manager-Session", "")
+        expires_at = database.get_session_expiry(token) if token else None
+        if expires_at is None:
+            raise HTTPException(status_code=401, detail="Login required")
+        return {
+            "authenticated": True,
+            "expires_in": max(0, int(expires_at - time.time())),
+        }
 
     @app.post("/api/logout")
     async def logout(request: Request):
         token = request.headers.get("X-Manager-Session", "")
-        sessions.pop(token, None)
+        if token:
+            database.delete_session(token)
         return {"ok": True}
 
     @app.get("/api/hosts")
@@ -174,18 +220,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         hosts = database.list_hosts()
 
         async def inspect(host: dict[str, Any]):
-            stored = database.get_host(host["id"])
-            client = AgentClient(
-                host["address"],
-                int(host["port"]),
-                stored["token"],
-                settings.agent_timeout_seconds,
-            )
             try:
-                status = await client.status()
+                status = await read_agent_status(host["id"])
                 return {
                     **host,
-                    "status": "ONLINE",
+                    "status": status.get("host_status", "ONLINE"),
                     "system": status.get("system", {}),
                     "launches": status.get("launches", {}),
                 }
@@ -266,7 +305,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/hosts/{host_id}/status")
     async def host_status(host_id: int):
         try:
-            return await client_for(host_id).status()
+            return await read_agent_status(host_id)
+        except HTTPException:
+            raise
         except Exception as exc:
             raise agent_error(exc, "PC agent unavailable")
 
@@ -343,7 +384,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/hosts/{host_id}/shutdown", status_code=202)
     async def shutdown_host(host_id: int):
         try:
-            return await client_for(host_id).shutdown()
+            client = client_for(host_id)
+            before = await client.status()
+            boot_time = (before.get("system") or {}).get("boot_time")
+            requested_at = time.time()
+            database.mark_shutdown_requested(host_id, requested_at, boot_time)
+            try:
+                result = await client.shutdown()
+            except Exception:
+                database.clear_shutdown_requested(host_id)
+                raise
+            return {
+                **result,
+                "host_status": "SHUTTING_DOWN",
+            }
         except Exception as exc:
             raise agent_error(exc, "Shutdown request failed")
 

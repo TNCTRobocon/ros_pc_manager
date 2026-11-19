@@ -44,6 +44,7 @@ p { margin: 5px 0 0; }
 .status-pill { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 7px 12px; font-weight: 800; font-size: .82rem; white-space: nowrap; }
 .status-pill.online { color: #082d22; background: var(--green); }
 .status-pill.offline { color: #3d1016; background: var(--red); }
+.status-pill.shutting-down { color: #392600; background: #ffcf70; }
 .status-pill.unknown { color: #1c2b3d; background: #a8b6c8; }
 .host-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .host-name { font-size: 1.7rem; font-weight: 850; overflow-wrap: anywhere; }

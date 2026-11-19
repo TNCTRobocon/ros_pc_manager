@@ -88,6 +88,7 @@ def create_app(settings: AgentSettings) -> FastAPI:
         distro = settings.ros_setup.parent.name
         return {
             "hostname": socket.gethostname(),
+            "boot_time": psutil.boot_time(),
             "ip_addresses": ipv4,
             "os": f"{platform.system()} {platform.release()}",
             "ros_distro": distro,

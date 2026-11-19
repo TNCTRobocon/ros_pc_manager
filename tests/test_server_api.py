@@ -210,3 +210,82 @@ def test_launch_configuration_routes_proxy_to_registered_agent(tmp_path, monkeyp
         params={"workspace": "/opt/ws", "package": "demo_pkg"},
     )
     assert files.json()["launch_files"] == ["demo.launch.py"]
+
+
+
+def test_login_session_survives_manager_server_recreation(tmp_path):
+    settings = make_settings(tmp_path)
+    first_client = TestClient(create_app(settings))
+    login = first_client.post("/api/login", json={"password": "correct-horse-battery"})
+    assert login.status_code == 200
+    token = login.json()["session_token"]
+    headers = {"X-Manager-Session": token}
+
+    # A fresh FastAPI app instance represents a Manager Server restart.
+    restarted_client = TestClient(create_app(settings))
+    session = restarted_client.get("/api/session", headers=headers)
+    assert session.status_code == 200
+    assert session.json()["authenticated"] is True
+    hosts_response = restarted_client.get("/api/hosts", headers=headers)
+    assert hosts_response.status_code == 200
+    assert hosts_response.headers["cache-control"].startswith("no-store")
+
+    logout = restarted_client.post("/api/logout", headers=headers)
+    assert logout.status_code == 200
+    assert restarted_client.get("/api/hosts", headers=headers).status_code == 401
+
+
+def test_host_status_changes_shutdown_offline_and_back_online(tmp_path, monkeypatch):
+    import pc_manager_server.main as server_module
+
+    class FakeAgentClient:
+        boot_time = 1000.0
+        available = True
+
+        def __init__(self, address, port, token, timeout):
+            self.address = address
+
+        async def status(self):
+            if not self.available:
+                raise ConnectionError("Agent is offline")
+            return {
+                "system": {"boot_time": self.boot_time, "default_domain_id": 32},
+                "launches": {"launches": [], "running_count": 0},
+            }
+
+        async def shutdown(self):
+            return {"ok": True, "message": "Shutdown requested"}
+
+    monkeypatch.setattr(server_module, "AgentClient", FakeAgentClient)
+    settings = make_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    login = client.post("/api/login", json={"password": "correct-horse-battery"})
+    headers = {"X-Manager-Session": login.json()["session_token"]}
+    registered = client.post("/api/hosts", headers=headers, json={
+        "name": "robot-shutdown-test",
+        "address": "192.0.2.82",
+        "port": 8765,
+        "domain_id": 32,
+    })
+    host_id = registered.json()["id"]
+
+    assert client.get("/api/hosts", headers=headers).json()[0]["status"] == "ONLINE"
+
+    shutdown = client.post(f"/api/hosts/{host_id}/shutdown", headers=headers, json={})
+    assert shutdown.status_code == 202
+    assert shutdown.json()["host_status"] == "SHUTTING_DOWN"
+
+    # It remains reachable briefly, but must not be reported ONLINE.
+    assert client.get("/api/hosts", headers=headers).json()[0]["status"] == "SHUTTING_DOWN"
+    assert client.get(
+        f"/api/hosts/{host_id}/status", headers=headers
+    ).json()["host_status"] == "SHUTTING_DOWN"
+
+    # Once the Agent stops responding, the host is OFFLINE.
+    FakeAgentClient.available = False
+    assert client.get("/api/hosts", headers=headers).json()[0]["status"] == "OFFLINE"
+
+    # A new OS boot time means the PC has restarted; its Agent is ONLINE again.
+    FakeAgentClient.available = True
+    FakeAgentClient.boot_time = 2000.0
+    assert client.get("/api/hosts", headers=headers).json()[0]["status"] == "ONLINE"

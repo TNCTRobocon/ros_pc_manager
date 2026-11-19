@@ -16,6 +16,7 @@ async function api(path, options = {}) {
   const sessionToken = sessionStorage.getItem("managerSession") || "";
   const response = await fetch(path, {
     ...options,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...(sessionToken ? { "X-Manager-Session": sessionToken } : {}),
@@ -29,7 +30,11 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     const message = body.detail || body.message || response.statusText || "API request failed";
-    throw new Error(typeof message === "string" ? message : JSON.stringify(message));
+    const error = new Error(
+      typeof message === "string" ? message : JSON.stringify(message)
+    );
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -48,12 +53,15 @@ function setPage(name) {
   }
 }
 
+function statusClass(status) {
+  return status === "ONLINE" ? "online" :
+    status === "OFFLINE" ? "offline" :
+    status === "SHUTTING_DOWN" ? "shutting-down" : "unknown";
+}
+
 function setStatus(element, status) {
   element.textContent = status || "UNKNOWN";
-  element.className = "status-pill " + (
-    status === "ONLINE" ? "online" :
-    status === "OFFLINE" ? "offline" : "unknown"
-  );
+  element.className = "status-pill " + statusClass(status);
 }
 
 function renderHosts() {
@@ -85,7 +93,7 @@ function renderHosts() {
     left.append(name, meta);
 
     const status = document.createElement("span");
-    status.className = "status-pill " + (host.status === "ONLINE" ? "online" : "offline");
+    status.className = "status-pill " + statusClass(host.status);
     status.textContent = host.status || "OFFLINE";
     openButton.append(left, status);
     openButton.addEventListener("click", () => openHost(host.id));
@@ -162,8 +170,22 @@ async function loadHosts() {
     if (selectedHost) {
       selectedHost = hosts.find((host) => host.id === selectedHost.id) || selectedHost;
     }
+    return true;
   } catch (error) {
-    showToast("PC一覧を取得できません: " + error.message);
+    // Do not leave an old ONLINE badge on screen when the manager cannot
+    // refresh the authoritative host state.
+    hosts = hosts.map((host) => ({ ...host, status: "UNKNOWN" }));
+    renderHosts();
+    if (selectedHost) {
+      selectedHost = hosts.find((host) => host.id === selectedHost.id) || selectedHost;
+      if (!$("controlPage").classList.contains("hidden")) {
+        setStatus($("controlHostStatus"), "UNKNOWN");
+        $("shutdownButton").disabled = true;
+        updateLaunchButtons();
+      }
+    }
+    showToast("PC一覧を更新できません: " + error.message);
+    return false;
   }
 }
 
@@ -185,12 +207,16 @@ async function refreshControl() {
   let online = false;
   try {
     const status = await api("/api/hosts/" + selectedHost.id + "/status");
-    online = true;
-    setStatus($("controlHostStatus"), "ONLINE");
+    const hostState = status.host_status || "ONLINE";
+    online = hostState === "ONLINE";
+    selectedHost.status = hostState;
+    setStatus($("controlHostStatus"), hostState);
     const domain = status.system && status.system.default_domain_id;
     if (domain !== undefined) $("controlDomainId").textContent = domain;
   } catch (error) {
-    setStatus($("controlHostStatus"), "OFFLINE");
+    const state = error.status === 502 || error.status === 503 ? "OFFLINE" : "UNKNOWN";
+    selectedHost.status = state;
+    setStatus($("controlHostStatus"), state);
   }
   try {
     const data = await api("/api/hosts/" + selectedHost.id + "/launches");
@@ -605,7 +631,11 @@ async function requestShutdown() {
   $("shutdownButton").disabled = true;
   try {
     await api("/api/hosts/" + selectedHost.id + "/shutdown", { method: "POST", body: "{}" });
-    showToast("シャットダウン要求を送信しました。");
+    selectedHost.status = "SHUTTING_DOWN";
+    setStatus($("controlHostStatus"), "SHUTTING_DOWN");
+    $("shutdownButton").disabled = true;
+    renderHosts();
+    showToast("シャットダウン要求を送信しました。PCの電源が切れるとOFFLINEになります。");
   } catch (error) {
     showToast("シャットダウン要求に失敗しました: " + error.message, 6000);
   } finally {
@@ -978,6 +1008,23 @@ $("topicPicker").addEventListener("toggle", (event) => {
 });
 
 let pollTimer = null;
+let liveRefreshInProgress = false;
+
+async function refreshLiveData() {
+  if (!sessionStorage.getItem("managerSession") || liveRefreshInProgress) return;
+  liveRefreshInProgress = true;
+  try {
+    const hostsUpdated = await loadHosts();
+    if (!hostsUpdated) return;
+    if (selectedHost && !$("controlPage").classList.contains("hidden")) {
+      await refreshControl();
+    } else {
+      await refreshBagStatus();
+    }
+  } finally {
+    liveRefreshInProgress = false;
+  }
+}
 
 function showLoginPage() {
   $("appHeader").classList.add("hidden");
@@ -1020,15 +1067,14 @@ async function initializeDashboard() {
   await refreshTopics();
   await refreshBagStatus();
   if (pollTimer) window.clearInterval(pollTimer);
-  pollTimer = window.setInterval(async () => {
-    if (!sessionStorage.getItem("managerSession")) return;
-    await loadHosts();
-    await refreshBagStatus();
-    if (selectedHost && !$("controlPage").classList.contains("hidden")) {
-      await refreshControl();
-    }
-  }, 3000);
+  pollTimer = window.setInterval(refreshLiveData, 3000);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshLiveData();
+});
+window.addEventListener("pageshow", () => refreshLiveData());
+window.addEventListener("focus", () => refreshLiveData());
 
 async function initialize() {
   $("loginForm").addEventListener("submit", submitLogin);
