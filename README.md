@@ -33,6 +33,8 @@ Agentが起動したlaunchはPID・プロセスグループ・起動時刻を記
 
 Ubuntu 24.04 / Python 3.12 / ROS 2 Jazzyを想定しています。
 
+一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
+
 ~~~bash
 cd /home/miquiteru/ros_pc_manager
 ./scripts/setup.sh
@@ -41,6 +43,8 @@ cd /home/miquiteru/ros_pc_manager
 config/server.yamlを確認します。初期値ではROS 2 Jazzyをsourceし、rosbagをvar/rosbagsへ保存します。親PCで独自メッセージ型を記録する場合は、ros.overlaysに必要なWorkspaceを追加してください。
 
 Manager Serverをsystemdに登録し、OS起動時の自動起動を有効にします。
+
+一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
 
 ~~~bash
 ./scripts/setup_server_service.sh
@@ -61,6 +65,8 @@ http://<親PCのIPアドレス>:8080/
 ## 各管理対象PCのセットアップ
 
 同じリポジトリを対象PCにも配置し、Python依存関係をセットアップします。
+
+一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
 
 ~~~bash
 ./scripts/setup.sh
@@ -91,6 +97,8 @@ launches:
 親PCのWeb画面で、PC名・IPアドレス・Agentポート（既定8765）・デフォルトDomain IDを入力してPCを登録します。登録時に一度だけ表示されるAgent Tokenを控えてください。
 
 対象PCで、Agentをsystemdに登録してOS起動時の自動起動を有効にします。
+
+一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
 
 ~~~bash
 ./scripts/setup_agent_service.sh
@@ -133,7 +141,80 @@ Agentは、実行ユーザーがrootでなければ次のコマンドを非対�
 sudo -n /usr/bin/systemctl poweroff
 ~~~
 
-許可する場合は、deploy/sudoers/ros-pc-manager.exampleの__AGENT_USER__をAgent実行ユーザーに置き換え、管理者がvisudoで検証して/etc/sudoers.d/ros-pc-managerへ設置してください。許可対象はsystemctl poweroffのみに限定します。Agentに任意のrootコマンド実行権限は与えません。
+シャットダウンが「sudo: a password is required」などで失敗する場合、Agentを実行しているLinuxユーザーに、上記のコマンドだけをパスワードなしで実行できる権限を付与します。**シャットダウン対象となる各PCで個別に設定してください。** 親PCの設定だけでは、別PCのシャットダウン権限は付与されません。
+
+### 1. Agentの実行ユーザーを確認
+
+Agentが起動しているPCで実行します。
+
+```bash
+ps -eo user,pid,args | grep '[r]os-pc-manager-agent'
+```
+
+出力例：
+
+```text
+miquiteru  1234  .../ros-pc-manager-agent --config ...
+```
+
+この例ではAgent実行ユーザーは `miquiteru` です。systemdで起動している場合も、実際のAgentプロセスのユーザーを確認してください。Agentがrootで実行されている場合、このsudoers設定は不要です（rootでのAgent実行は通常推奨しません）。
+
+### 2. sudoersファイルを編集
+
+対象PCで次を実行します。
+
+```bash
+sudo visudo -f /etc/sudoers.d/ros-pc-manager
+```
+
+次の1行を追加します。左側のユーザー名は、手順1で確認したAgent実行ユーザーに置き換えてください。
+
+```text
+miquiteru ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
+```
+
+例えばAgent実行ユーザーが `robo-a` なら、次のようにします。
+
+```text
+robo-a ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
+```
+
+保存して終了します。sudoersファイルを直接エディタで編集せず、必ず `visudo` を使用してください。
+
+### 3. ファイル権限と構文を確認
+
+```bash
+sudo chmod 0440 /etc/sudoers.d/ros-pc-manager
+sudo visudo -cf /etc/sudoers.d/ros-pc-manager
+```
+
+構文が正しければ、次のように表示されます。
+
+```text
+/etc/sudoers.d/ros-pc-manager: parsed OK
+```
+
+### 4. パスワードなしで実行できるか確認
+
+Agentを実行しているユーザーで、次を実行します。
+
+```bash
+sudo -n -l /usr/bin/systemctl poweroff
+```
+
+許可されたコマンドとして `/usr/bin/systemctl poweroff` が表示されれば確認完了です。この確認コマンドは権限を照会するだけで、シャットダウンは実行しません。**動作確認のために `systemctl poweroff` 自体を手動実行しないでください。**
+
+### 5. スマートフォンから再試行
+
+sudoers設定はコマンド実行時に参照されるため、通常AgentやManager Serverの再起動は不要です。スマートフォンから対象PCのシャットダウンを再試行してください。
+
+それでも失敗する場合は、Agent実行ユーザー、sudoersファイルの内容・権限、`visudo -cf` の結果を確認してください。特に、Agentを起動したユーザーとsudoersに記載したユーザーが一致している必要があります。
+
+### sudoers設定例
+
+このリポジトリには `deploy/sudoers/ros-pc-manager.example` も用意しています。ファイル内の `__AGENT_USER__` をAgent実行ユーザーに置き換えてから、管理者が `/etc/sudoers.d/ros-pc-manager` に配置し、必ず `chmod 0440` と `visudo -cf` で検証してください。
+
+許可対象は `/usr/bin/systemctl poweroff` のみに限定します。Agentに任意のrootコマンド実行権限は与えません。
 
 ## systemdによる自動起動
 
