@@ -16,6 +16,39 @@ def _resolve(value: str | Path, base: Path = PROJECT_ROOT) -> Path:
     return path if path.is_absolute() else (base / path).resolve()
 
 
+def _load_or_create_admin_password(password_file: Path) -> str:
+    """Load the generated password, rotating legacy values to exactly 8 characters."""
+    if password_file.is_file():
+        current_password = password_file.read_text().strip()
+        if len(current_password) == 8:
+            password_file.chmod(0o600)
+            return current_password
+
+        # The password file is the generated-password store. Rotate older
+        # generated values on the next server startup; explicit config/env
+        # passwords bypass this helper and are left unchanged.
+        password = secrets.token_urlsafe(6)
+        password_file.write_text(password + "\n")
+        password_file.chmod(0o600)
+        print(
+            "\n[ROS PC Manager] Admin password updated to 8 characters. "
+            f"Read it from: {password_file}\n",
+            flush=True,
+        )
+        return password
+
+    password = secrets.token_urlsafe(6)
+    password_file.parent.mkdir(parents=True, exist_ok=True)
+    password_file.write_text(password + "\n")
+    password_file.chmod(0o600)
+    print(
+        "\n[ROS PC Manager] First-run 8-character admin password generated. "
+        f"Read it from: {password_file}\n",
+        flush=True,
+    )
+    return password
+
+
 @dataclass(frozen=True)
 class Settings:
     project_root: Path
@@ -59,17 +92,7 @@ def load_settings() -> Settings:
     )
     if not admin_password:
         password_file = data_root / "admin_password.txt"
-        if password_file.is_file():
-            admin_password = password_file.read_text().strip()
-        else:
-            admin_password = secrets.token_urlsafe(24)
-            password_file.write_text(admin_password + "\n")
-            password_file.chmod(0o600)
-            print(
-                "\n[ROS PC Manager] First-run admin password generated. "
-                f"Read it from: {password_file}\n",
-                flush=True,
-            )
+        admin_password = _load_or_create_admin_password(password_file)
 
     domains_path = _resolve(raw.get("domains_file", "config/domains.yaml"))
     if not domains_path.is_file():

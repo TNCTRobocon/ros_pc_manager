@@ -53,7 +53,7 @@ Manager Serverをsystemdに登録し、OS起動時の自動起動を有効にし
 
 このスクリプトは、存在しない場合だけconfig/server.yamlとconfig/domains.yamlをサンプルから作成し、ROS 2環境を検証してからサービス登録・自動起動ON・即時起動を行います。既存設定は上書きしません。通常ユーザーで実行してください（sudoはスクリプト内で要求されます）。
 
-初回起動時に管理パスワードが生成され、var/admin_password.txtに保存されます。ファイル権限は0600です。パスワードを確認し、スマートフォンから次のURLを開いてログインしてください。
+初回起動時に8文字の管理パスワードが生成され、var/admin_password.txtに保存されます。ファイル権限は0600です。既存の自動生成パスワードが8文字以外の場合は、次回Server起動時に新しい8文字へ更新されます。config/server.yamlのsecurity.admin_passwordまたは環境変数ROS_PC_MANAGER_ADMIN_PASSWORDで明示指定したパスワードは変更しません。パスワードを確認し、スマートフォンから次のURLを開いてログインしてください。
 
 手動起動を使う場合は、従来どおり `./scripts/run_server.sh` を実行できます。ただし、systemdサービスと手動起動を同時に実行しないでください。
 
@@ -95,7 +95,7 @@ launches:
 
 起動前に、指定Workspaceのinstall/setup.bashが存在することを確認してください。launch引数はYAMLで固定し、画面から任意コマンドを送る機能は設けていません。
 
-親PCのWeb画面で、PC名・IPアドレス・Agentポート（既定8765）・デフォルトDomain IDを入力してPCを登録します。登録時に一度だけ表示されるAgent Tokenを控えてください。
+親PCのWeb画面で、PC名・IPアドレス・Agentポート（既定8765）・デフォルトDomain IDを入力してPCを登録します。登録直後にAgent Tokenが表示されます。後から再確認する場合は、対象PCの操作画面で「詳細表示」→「Agent認証」→「Agent Tokenを表示」を選択してください。
 
 対象PCで、Agentをsystemdに登録してOS起動時の自動起動を有効にします。
 
@@ -256,7 +256,7 @@ Agentサービスは `KillMode=process` を使用します。Agentサービス�
 - 管理対象PCのシャットダウン要求時は、要求時刻とAgentが報告するOS起動時刻をSQLiteに保存します。Agentがまだ応答している間はSHUTTING_DOWN、応答しなくなるとOFFLINE、OS起動時刻の更新を検出するとONLINEに戻ります。シャットダウン要求後180秒経っても同じOS起動状態でAgentが応答する場合は、シャットダウンが完了していないと判断してONLINEに戻します。
 - APIレスポンスはHTTPキャッシュを無効化し、ブラウザの画面復帰・フォーカス復帰時にもPC状態を再取得します。
 - Agent APIはPCごとのBearer tokenを要求します。
-- Agent tokenは親PCのSQLite DBに保存されます。DBは可能な範囲で0600に設定します。
+- Agent Tokenは親PCのSQLite DBに保存されます。DBは0600に設定し、認証済みの管理画面から対象PCごとに表示できます。Token表示APIもManagerログインを必須とし、config/hosts.yamlには出力しません。
 - config/hosts.yamlはSQLiteから自動生成する参照用ファイルです。編集元として使用せず、PC登録・編集・削除後とサーバ起動時に再生成します。Agent tokenは含めません。
 - 通信は同一LAN内のHTTPです。信頼できる隔離LANで使用し、ルーターで外部公開しないでください。共有・不特定のLANではTLS/VPNを追加してください。
 - ROS 2 DDSのマルチキャスト通信がLAN内で届く必要があります。Wi-Fiのクライアント隔離、VLAN、ファイアウォールでDiscoveryが遮断されると親PCからtopicを発見できません。

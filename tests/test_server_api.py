@@ -51,6 +51,10 @@ def test_api_requires_login_and_registers_pc_once(tmp_path):
     assert "token:" in body["agent_config"]
     assert "\n" in body["agent_config"]
     assert "agent_token" not in client.get("/api/hosts", headers=headers).json()[0]
+    assert client.get(f"/api/hosts/{body['id']}/token").status_code == 401
+    token_view = client.get(f"/api/hosts/{body['id']}/token", headers=headers)
+    assert token_view.status_code == 200
+    assert token_view.json() == {"agent_token": body["agent_token"]}
 
     duplicate = client.post("/api/hosts", headers=headers, json={
         "name": "robot-test-duplicate",
@@ -100,6 +104,7 @@ def test_api_requires_login_and_registers_pc_once(tmp_path):
 
     deleted = client.delete(f"/api/hosts/{body['id']}", headers=headers)
     assert deleted.status_code == 200
+    assert client.get(f"/api/hosts/{body['id']}/token", headers=headers).status_code == 404
     assert yaml.safe_load(hosts_yaml.read_text(encoding="utf-8"))["hosts"] == []
 
 

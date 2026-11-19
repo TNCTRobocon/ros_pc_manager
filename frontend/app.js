@@ -47,7 +47,18 @@ function showToast(message, duration = 3200) {
   showToast.timer = window.setTimeout(() => toast.classList.add("hidden"), duration);
 }
 
+function clearDetailAgentToken() {
+  const button = $("detailAgentTokenButton");
+  const root = $("detailAgentTokenValue");
+  if (!button || !root) return;
+  root.replaceChildren();
+  root.classList.add("hidden");
+  button.dataset.visible = "false";
+  button.textContent = "Agent Tokenを表示";
+}
+
 function setPage(name) {
+  if (name !== "detailsPage") clearDetailAgentToken();
   for (const page of ["hostsPage", "controlPage", "detailsPage", "launchSettingsPage", "rosbagPage"]) {
     $(page).classList.toggle("hidden", page !== name);
   }
@@ -831,6 +842,8 @@ async function stopBag() {
 async function openDetails() {
   if (!selectedHost) return;
   setPage("detailsPage");
+  clearDetailAgentToken();
+  $("detailAgentTokenButton").disabled = false;
   $("detailTitle").textContent = selectedHost.name + " 詳細";
   $("basicInfo").replaceChildren();
   $("systemInfo").replaceChildren();
@@ -878,6 +891,38 @@ async function openDetails() {
     ["記録状態", bagInfo?.recording ? "RECORDING" : "STOPPED"],
     ["記録Domain ID", info?.domain_id ?? "-"],
   ]);
+}
+
+async function toggleDetailAgentToken() {
+  if (!selectedHost) return;
+  const button = $("detailAgentTokenButton");
+  const root = $("detailAgentTokenValue");
+
+  if (button.dataset.visible === "true") {
+    root.replaceChildren();
+    root.classList.add("hidden");
+    button.dataset.visible = "false";
+    button.textContent = "Agent Tokenを表示";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "取得中...";
+  try {
+    const result = await api("/api/hosts/" + selectedHost.id + "/token");
+    const token = document.createElement("code");
+    token.className = "agent-token-value";
+    token.textContent = result.agent_token;
+    root.replaceChildren(token);
+    root.classList.remove("hidden");
+    button.dataset.visible = "true";
+    button.textContent = "Agent Tokenを隠す";
+  } catch (error) {
+    showToast("Agent Tokenを取得できません: " + error.message, 6000);
+    button.textContent = "Agent Tokenを表示";
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderDefinitionList(root, rows) {
@@ -936,7 +981,7 @@ async function registerHost(event) {
         "agent/config/agent.yaml の agent.token に次の値を設定します。\n" +
         result.agent_token + "\n\n" +
         result.agent_config +
-        "\n\nこのトークンは画面を閉じると再表示されません。";
+        "\n\n再確認が必要な場合は、このPCの詳細画面にある「Agent認証」から表示できます。";
       $("registrationResult").classList.remove("hidden");
       formElement.reset();
       showToast("PCを登録し、config/hosts.yamlを更新しました。");
@@ -959,6 +1004,7 @@ $("backToHosts").addEventListener("click", () => setPage("hostsPage"));
 $("backToHostsFromBag").addEventListener("click", () => setPage("hostsPage"));
 $("backToControl").addEventListener("click", () => setPage("controlPage"));
 $("detailsButton").addEventListener("click", openDetails);
+$("detailAgentTokenButton").addEventListener("click", toggleDetailAgentToken);
 $("launchSettingsButton").addEventListener("click", openLaunchSettings);
 $("backToControlFromLaunchSettings").addEventListener("click", () => setPage("controlPage"));
 $("addLaunchConfigButton").addEventListener("click", () => showLaunchEditor());
@@ -1027,6 +1073,7 @@ async function refreshLiveData() {
 }
 
 function showLoginPage() {
+  clearDetailAgentToken();
   $("appHeader").classList.add("hidden");
   for (const page of ["hostsPage", "controlPage", "detailsPage", "launchSettingsPage", "rosbagPage"]) {
     $(page).classList.add("hidden");

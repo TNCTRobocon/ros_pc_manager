@@ -302,6 +302,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sync_hosts_yaml()
         return {"ok": True}
 
+    @app.get("/api/hosts/{host_id}/token")
+    async def host_token(host_id: int):
+        host = database.get_host(host_id)
+        if not host:
+            raise HTTPException(status_code=404, detail="PC is not registered")
+        return {"agent_token": host["token"]}
+
     @app.get("/api/hosts/{host_id}/status")
     async def host_status(host_id: int):
         try:
