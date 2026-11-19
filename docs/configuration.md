@@ -7,6 +7,7 @@ Copy config/server.yaml.example to config/server.yaml. Important fields:
 - server.host / server.port: bind address and web port.
 - security.admin_password: leave empty to generate var/admin_password.txt, or provide a fixed value.
 - paths.rosbag_root: parent-PC rosbag storage root.
+- paths.hosts_yaml: generated public host inventory (default: config/hosts.yaml). This file is regenerated from SQLite on startup and after host create/update/delete. Do not edit it manually; Agent tokens are never exported.
 - ros.setup: ROS distribution setup file.
 - ros.overlays: parent-PC Workspace paths whose install/setup.bash is sourced before topic discovery and recording.
 - limits.minimum_free_gb: minimum free disk space required to start a new recording.

@@ -32,6 +32,7 @@ class Settings:
     warning_free_gb: float
     agent_timeout_seconds: float
     configured_domains: tuple[int, ...]
+    hosts_yaml_path: Path | None = None
 
 
 def load_settings() -> Settings:
@@ -111,4 +112,5 @@ def load_settings() -> Settings:
         warning_free_gb=warning_free_gb,
         agent_timeout_seconds=float(server.get("agent_timeout_seconds", 3.0)),
         configured_domains=tuple(configured_domains),
+        hosts_yaml_path=_resolve(paths.get("hosts_yaml", "config/hosts.yaml")),
     )

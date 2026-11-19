@@ -60,6 +60,25 @@ class Database:
             host_id = int(cur.lastrowid)
         return self.get_host(host_id) or {}, token
 
+    def update_host(
+        self,
+        host_id: int,
+        name: str,
+        address: str,
+        port: int,
+        domain_id: int,
+    ) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE hosts
+                SET name=?, address=?, port=?, domain_id=?
+                WHERE id=?
+                """,
+                (name, address, port, domain_id, host_id),
+            )
+            return cur.rowcount > 0
+
     def delete_host(self, host_id: int) -> bool:
         with self.connect() as conn:
             cur = conn.execute("DELETE FROM hosts WHERE id=?", (host_id,))

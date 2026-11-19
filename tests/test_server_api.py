@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from pc_manager_server.config import Settings
+from pc_manager_server.db import Database
 from pc_manager_server.main import create_app
 
 
@@ -60,3 +61,64 @@ def test_api_requires_login_and_registers_pc_once(tmp_path):
     assert duplicate.status_code == 409
 
     assert client.get("/api/session", headers=headers).status_code == 200
+
+    # hosts.yaml is regenerated from SQLite, and never receives the Agent token.
+    import yaml
+    hosts_yaml = tmp_path / "hosts.yaml"
+    exported = yaml.safe_load(hosts_yaml.read_text(encoding="utf-8"))
+    assert exported["hosts"][0] == {
+        "id": body["id"],
+        "name": "robot-test",
+        "address": "192.0.2.10",
+        "port": 8765,
+        "domain_id": 32,
+    }
+    assert body["agent_token"] not in hosts_yaml.read_text(encoding="utf-8")
+
+    updated = client.put(
+        f"/api/hosts/{body['id']}",
+        headers=headers,
+        json={
+            "name": "robot-test-renamed",
+            "address": "192.0.2.11",
+            "port": 8766,
+            "domain_id": 33,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "robot-test-renamed"
+    assert "token" not in updated.json()
+    exported = yaml.safe_load(hosts_yaml.read_text(encoding="utf-8"))
+    assert exported["hosts"][0] == {
+        "id": body["id"],
+        "name": "robot-test-renamed",
+        "address": "192.0.2.11",
+        "port": 8766,
+        "domain_id": 33,
+    }
+    assert body["agent_token"] not in hosts_yaml.read_text(encoding="utf-8")
+
+    deleted = client.delete(f"/api/hosts/{body['id']}", headers=headers)
+    assert deleted.status_code == 200
+    assert yaml.safe_load(hosts_yaml.read_text(encoding="utf-8"))["hosts"] == []
+
+
+def test_server_startup_rebuilds_hosts_yaml_from_sqlite(tmp_path):
+    settings = make_settings(tmp_path)
+    database = Database(settings.database_path)
+    host, token = database.add_host("robot-existing", "192.0.2.50", 8765, 32)
+    hosts_yaml = tmp_path / "hosts.yaml"
+    hosts_yaml.write_text("stale: true\\n", encoding="utf-8")
+
+    create_app(settings)
+
+    import yaml
+    exported = yaml.safe_load(hosts_yaml.read_text(encoding="utf-8"))
+    assert exported["hosts"] == [{
+        "id": host["id"],
+        "name": "robot-existing",
+        "address": "192.0.2.50",
+        "port": 8765,
+        "domain_id": 32,
+    }]
+    assert token not in hosts_yaml.read_text(encoding="utf-8")

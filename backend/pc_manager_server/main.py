@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import ipaddress
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from .agent_client import AgentClient
 from .config import Settings, load_settings
 from .db import Database
+from .hosts_yaml import HostsYamlExporter
 from .rosbag_manager import RosbagManager
 
 SESSION_TTL_SECONDS = 12 * 60 * 60
@@ -51,6 +53,10 @@ class HostCreate(BaseModel):
             raise ValueError("Enter an IPv4 or IPv6 address") from exc
 
 
+class HostUpdate(HostCreate):
+    """Editable public host settings; the Agent token is intentionally unchanged."""
+
+
 class LaunchStart(BaseModel):
     launch_id: str = Field(min_length=1, max_length=80)
 
@@ -67,6 +73,12 @@ class RosbagStart(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     database = Database(settings.database_path)
+    hosts_yaml_path = settings.hosts_yaml_path or (settings.database_path.parent / "hosts.yaml")
+    hosts_yaml_exporter = HostsYamlExporter(hosts_yaml_path)
+    hosts_sync_lock = threading.RLock()
+    # SQLite is authoritative. Rebuild the YAML view on every server start so
+    # a previous export failure cannot leave stale registration data.
+    hosts_yaml_exporter.sync(database.list_hosts())
     rosbag_manager = RosbagManager(settings)
     sessions: dict[str, float] = {}
     app = FastAPI(title="ROS PC Manager", version="0.2.0")
@@ -83,6 +95,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 sessions.pop(token, None)
                 return JSONResponse(status_code=401, content={"detail": "Login required"})
         return await call_next(request)
+
+    def sync_hosts_yaml() -> None:
+        try:
+            # Keep the DB read and file replace in one critical section so
+            # concurrent registrations cannot leave an older YAML snapshot last.
+            with hosts_sync_lock:
+                hosts_yaml_exporter.sync(database.list_hosts())
+        except OSError as exc:
+            # The SQLite transaction has already committed. A server restart
+            # retries the export from the authoritative database.
+            raise HTTPException(
+                status_code=500,
+                detail=f"PC data was saved to SQLite, but hosts.yaml export failed: {exc}",
+            ) from exc
 
     def client_for(host_id: int) -> AgentClient:
         host = database.get_host(host_id)
@@ -176,6 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     detail="This IP address and port are already registered",
                 )
             raise
+        sync_hosts_yaml()
         agent_config = (
             "agent:\n"
             f"  name: {body.name!r}\n"
@@ -196,10 +223,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "agent_config": agent_config,
         }
 
+    @app.put("/api/hosts/{host_id}")
+    async def update_host(host_id: int, body: HostUpdate):
+        if not database.get_host(host_id):
+            raise HTTPException(status_code=404, detail="PC is not registered")
+        try:
+            updated = database.update_host(
+                host_id,
+                body.name,
+                body.address,
+                body.port,
+                body.domain_id,
+            )
+        except Exception as exc:
+            if "UNIQUE constraint failed" in str(exc):
+                raise HTTPException(
+                    status_code=409,
+                    detail="This IP address and port are already registered",
+                ) from exc
+            raise
+        if not updated:
+            raise HTTPException(status_code=404, detail="PC is not registered")
+        sync_hosts_yaml()
+        host = database.get_host(host_id) or {}
+        return {key: value for key, value in host.items() if key != "token"}
+
     @app.delete("/api/hosts/{host_id}")
     async def remove_host(host_id: int):
         if not database.delete_host(host_id):
             raise HTTPException(status_code=404, detail="PC is not registered")
+        sync_hosts_yaml()
         return {"ok": True}
 
     @app.get("/api/hosts/{host_id}/status")

@@ -6,6 +6,8 @@
 ## 主な機能
 
 - IPアドレスを手動登録し、Agentのオンライン状態を表示
+- PC登録・編集・削除をWeb画面から実行
+- 登録情報をSQLiteに保存し、config/hosts.yamlへ自動出力（認証トークンは出力しない）
 - YAMLに登録したlaunchの起動・停止
 - launchの実行状態マーク（●実行中 / ○停止中 / ◐起動中 / ◌停止中）
 - 管理Agentが起動したlaunchのみ一覧表示・一括停止
@@ -124,6 +126,7 @@ deploy/systemd/*.service.exampleはテンプレートです。__RUN_USER__、__R
 - 管理UIは初回生成の管理パスワードでログインします。セッションはサーバメモリ内で12時間有効です。
 - Agent APIはPCごとのBearer tokenを要求します。
 - Agent tokenは親PCのSQLite DBに保存されます。DBは可能な範囲で0600に設定します。
+- config/hosts.yamlはSQLiteから自動生成する参照用ファイルです。編集元として使用せず、PC登録・編集・削除後とサーバ起動時に再生成します。Agent tokenは含めません。
 - 通信は同一LAN内のHTTPです。信頼できる隔離LANで使用し、ルーターで外部公開しないでください。共有・不特定のLANではTLS/VPNを追加してください。
 - ROS 2 DDSのマルチキャスト通信がLAN内で届く必要があります。Wi-Fiのクライアント隔離、VLAN、ファイアウォールでDiscoveryが遮断されると親PCからtopicを発見できません。
 - シャットダウン確認は行いますが、launchやrosbag記録中でも実行可能です。ROSbag記録中に対象PCを停止すると、そのPCからの記録データは止まります。親PC自体をシャットダウンするとrosbagも終了します。

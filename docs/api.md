@@ -8,7 +8,9 @@ All /api/* endpoints except /api/login and /api/health require X-Manager-Session
 - GET /api/session: validate the current session.
 - GET /api/hosts: registered PCs and online/offline probe results.
 - POST /api/hosts: manual PC registration; returns the generated Agent token once.
+- PUT /api/hosts/{id}: update display name, IP address, Agent port, and default Domain ID without rotating the Agent token.
 - DELETE /api/hosts/{id}: remove a registration.
+- PC create/update/delete operations regenerate config/hosts.yaml atomically from SQLite. The YAML contains public inventory fields only and never contains Agent tokens; SQLite remains authoritative.
 - GET /api/hosts/{id}/status: system status and node names from Agent.
 - GET /api/hosts/{id}/launches: registered launch state.
 - POST /api/hosts/{id}/launches/start: start an allowlisted launch ID.

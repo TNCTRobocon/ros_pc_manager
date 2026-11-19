@@ -42,8 +42,9 @@
         <div class="empty-card">登録済みPCはありません。</div>
       </div>
 
-      <section class="panel register-panel">
-        <h2>PCを登録</h2>
+      <section id="registerPanel" class="panel register-panel">
+        <h2 id="hostFormTitle">PCを登録</h2>
+        <p class="help-text">登録情報はSQLiteに保存し、config/hosts.yamlへ自動出力します。YAMLにはAgent認証トークンを出力しません。IP・ポート・Domain IDを変更した場合は、Agent側の設定との整合も確認してください。</p>
         <form id="registerForm" class="form-grid">
           <label>表示名
             <input name="name" required maxlength="80" placeholder="robot-a">
@@ -57,7 +58,8 @@
           <label>デフォルトDomain ID
             <input name="domain_id" type="number" min="0" max="232" value="32" required>
           </label>
-          <button class="primary-button span-all" type="submit">PCを登録</button>
+          <button id="hostSubmitButton" class="primary-button span-all" type="submit">PCを登録</button>
+          <button id="cancelHostEdit" class="secondary-button span-all hidden" type="button">編集をキャンセル</button>
         </form>
         <div id="registrationResult" class="notice hidden"></div>
       </section>

@@ -20,3 +20,16 @@ def test_duplicate_address_port_is_rejected(tmp_path: Path):
     db.add_host("robot-a", "192.168.1.20", 8765, 32)
     with pytest.raises(Exception):
         db.add_host("robot-b", "192.168.1.20", 8765, 33)
+
+
+def test_update_host_keeps_agent_token(tmp_path: Path):
+    db = Database(tmp_path / "db.sqlite3")
+    host, token = db.add_host("robot-a", "192.168.1.20", 8765, 32)
+
+    assert db.update_host(host["id"], "robot-b", "192.168.1.21", 8766, 33)
+    updated = db.get_host(host["id"])
+    assert updated["name"] == "robot-b"
+    assert updated["address"] == "192.168.1.21"
+    assert updated["port"] == 8766
+    assert updated["domain_id"] == 33
+    assert updated["token"] == token

@@ -12,6 +12,8 @@ paths:
   database: var/manager.sqlite3
   rosbag_root: var/rosbags
   rosbag_state: var/rosbag_state.json
+  # Automatically generated from SQLite. Do not edit manually.
+  hosts_yaml: config/hosts.yaml
   log_root: var/logs
 
 ros:

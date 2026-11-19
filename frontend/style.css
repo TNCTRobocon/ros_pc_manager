@@ -32,8 +32,13 @@ p { margin: 5px 0 0; }
 .help-text { font-size: .84rem; line-height: 1.5; margin-top: 10px; }
 .panel, .host-card, .empty-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
 .host-grid { display: grid; gap: 10px; }
-.host-card { width: 100%; text-align: left; color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.host-card-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 8px; }
+.host-card { width: 100%; min-width: 0; text-align: left; color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .host-card:active { transform: scale(.99); }
+.host-card-actions { display: flex; flex-direction: column; gap: 6px; }
+.host-action-button { min-width: 58px; flex: 1; border: 1px solid var(--border); border-radius: 10px; padding: 7px 10px; background: var(--panel-2); color: var(--text); font-weight: 700; }
+.host-delete-button { color: #ffdce0; border-color: #87404a; background: #542630; }
+
 .host-card-name { font-size: 1.15rem; font-weight: 800; overflow-wrap: anywhere; }
 .host-card-meta { margin-top: 4px; color: var(--muted); font-size: .88rem; }
 .status-pill { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 7px 12px; font-weight: 800; font-size: .82rem; white-space: nowrap; }

@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 
 let hosts = [];
 let selectedHost = null;
+let editingHostId = null;
 let launches = [];
 let availableTopics = [];
 let selectedTopics = new Set();
@@ -65,10 +66,15 @@ function renderHosts() {
     root.append(empty);
     return;
   }
+
   for (const host of hosts) {
-    const button = document.createElement("button");
-    button.className = "host-card";
-    button.type = "button";
+    const row = document.createElement("div");
+    row.className = "host-card-row";
+
+    const openButton = document.createElement("button");
+    openButton.className = "host-card";
+    openButton.type = "button";
+
     const left = document.createElement("div");
     const name = document.createElement("div");
     name.className = "host-card-name";
@@ -77,12 +83,75 @@ function renderHosts() {
     meta.className = "host-card-meta";
     meta.textContent = host.address + " · Domain ID " + host.domain_id;
     left.append(name, meta);
+
     const status = document.createElement("span");
     status.className = "status-pill " + (host.status === "ONLINE" ? "online" : "offline");
     status.textContent = host.status || "OFFLINE";
-    button.append(left, status);
-    button.addEventListener("click", () => openHost(host.id));
-    root.append(button);
+    openButton.append(left, status);
+    openButton.addEventListener("click", () => openHost(host.id));
+
+    const actions = document.createElement("div");
+    actions.className = "host-card-actions";
+
+    const editButton = document.createElement("button");
+    editButton.className = "host-action-button";
+    editButton.type = "button";
+    editButton.textContent = "編集";
+    editButton.addEventListener("click", () => beginEditHost(host));
+
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "host-action-button host-delete-button";
+    deleteButton.type = "button";
+    deleteButton.textContent = "削除";
+    deleteButton.addEventListener("click", () => deleteHost(host));
+
+    actions.append(editButton, deleteButton);
+    row.append(openButton, actions);
+    root.append(row);
+  }
+}
+
+function beginEditHost(host) {
+  editingHostId = host.id;
+  const form = $("registerForm");
+  form.elements.namedItem("name").value = host.name;
+  form.elements.namedItem("address").value = host.address;
+  form.elements.namedItem("port").value = host.port;
+  form.elements.namedItem("domain_id").value = host.domain_id;
+  $("hostFormTitle").textContent = "PC情報を編集";
+  $("hostSubmitButton").textContent = "変更を保存";
+  $("cancelHostEdit").classList.remove("hidden");
+  $("registrationResult").classList.add("hidden");
+  $("registerPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function cancelHostEdit() {
+  editingHostId = null;
+  $("registerForm").reset();
+  $("hostFormTitle").textContent = "PCを登録";
+  $("hostSubmitButton").textContent = "PCを登録";
+  $("cancelHostEdit").classList.add("hidden");
+  $("registrationResult").classList.add("hidden");
+}
+
+async function deleteHost(host) {
+  if (!window.confirm(
+    host.name + " (" + host.address + ") の登録を削除しますか？\\n" +
+    "Agent側のプログラムや起動中のlaunchは停止しません。"
+  )) return;
+
+  try {
+    await api("/api/hosts/" + host.id, { method: "DELETE" });
+    if (editingHostId === host.id) cancelHostEdit();
+    if (selectedHost && selectedHost.id === host.id) {
+      selectedHost = null;
+      setPage("hostsPage");
+    }
+    await loadHosts();
+    await loadDomains();
+    showToast("PC登録を削除し、hosts.yamlを更新しました。");
+  } catch (error) {
+    showToast("PC登録の削除に失敗しました: " + error.message, 6000);
   }
 }
 
@@ -518,27 +587,55 @@ function formatBytes(value) {
 
 async function registerHost(event) {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   const payload = {
     name: form.get("name"),
     address: form.get("address"),
     port: Number(form.get("port")),
     domain_id: Number(form.get("domain_id")),
   };
+
+  const wasEditing = editingHostId !== null;
   try {
-    const result = await api("/api/hosts", { method: "POST", body: JSON.stringify(payload) });
-    $("registrationResult").textContent =
-      "PCを登録しました。Agent側の設定ファイルに以下を反映してください。\n\n" +
-      "agent/config/agent.yaml の agent.token に次の値を設定します。\n" +
-      result.agent_token + "\n\n" +
-      result.agent_config +
-      "\n\nこのトークンは画面を閉じると再表示されません。";
-    $("registrationResult").classList.remove("hidden");
-    event.currentTarget.reset();
+    if (wasEditing) {
+      await api("/api/hosts/" + editingHostId, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      editingHostId = null;
+      formElement.reset();
+      $("hostFormTitle").textContent = "PCを登録";
+      $("hostSubmitButton").textContent = "PCを登録";
+      $("cancelHostEdit").classList.add("hidden");
+      $("registrationResult").textContent =
+        "PC情報を更新しました。config/hosts.yamlも更新されています。Agentトークンは変更していません。";
+      $("registrationResult").classList.remove("hidden");
+      showToast("PC情報を更新しました。");
+    } else {
+      const result = await api("/api/hosts", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      $("registrationResult").textContent =
+        "PCを登録しました。Agent側の設定ファイルに以下を反映してください。\n\n" +
+        "agent/config/agent.yaml の agent.token に次の値を設定します。\n" +
+        result.agent_token + "\n\n" +
+        result.agent_config +
+        "\n\nこのトークンは画面を閉じると再表示されません。";
+      $("registrationResult").classList.remove("hidden");
+      formElement.reset();
+      showToast("PCを登録し、config/hosts.yamlを更新しました。");
+    }
+
     await loadHosts();
     await loadDomains();
   } catch (error) {
-    showToast("PC登録に失敗しました: " + error.message, 6000);
+    showToast(
+      (wasEditing ? "PC情報の更新" : "PC登録") +
+      "に失敗しました: " + error.message,
+      6000,
+    );
   }
 }
 
@@ -556,6 +653,7 @@ async function showRosbagPage() {
 $("navHosts").addEventListener("click", () => setPage("hostsPage"));
 $("navRosbag").addEventListener("click", showRosbagPage);
 $("registerForm").addEventListener("submit", registerHost);
+$("cancelHostEdit").addEventListener("click", cancelHostEdit);
 $("backToHosts").addEventListener("click", () => setPage("hostsPage"));
 $("backToHostsFromBag").addEventListener("click", () => setPage("hostsPage"));
 $("backToControl").addEventListener("click", () => setPage("controlPage"));
