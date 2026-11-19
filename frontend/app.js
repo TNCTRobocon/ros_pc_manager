@@ -44,8 +44,6 @@ function setPage(name) {
   for (const page of ["hostsPage", "controlPage", "detailsPage", "rosbagPage"]) {
     $(page).classList.toggle("hidden", page !== name);
   }
-  $("navHosts").classList.toggle("active", name === "hostsPage" || name === "controlPage" || name === "detailsPage");
-  $("navRosbag").classList.toggle("active", name === "rosbagPage");
 }
 
 function setStatus(element, status) {
@@ -639,19 +637,6 @@ async function registerHost(event) {
   }
 }
 
-async function showRosbagPage() {
-  if (selectedHost) {
-    setPage("controlPage");
-    document.querySelector(".bag-actions")?.scrollIntoView({ behavior: "smooth", block: "center" });
-  } else {
-    setPage("rosbagPage");
-    await refreshBagStatus();
-    showToast("Domain IDは登録済みPC・launchの設定から自動収集されます。まずPCを登録してください。");
-  }
-}
-
-$("navHosts").addEventListener("click", () => setPage("hostsPage"));
-$("navRosbag").addEventListener("click", showRosbagPage);
 $("registerForm").addEventListener("submit", registerHost);
 $("cancelHostEdit").addEventListener("click", cancelHostEdit);
 $("backToHosts").addEventListener("click", () => setPage("hostsPage"));
