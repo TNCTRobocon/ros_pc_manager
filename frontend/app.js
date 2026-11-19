@@ -4,6 +4,8 @@ let hosts = [];
 let selectedHost = null;
 let editingHostId = null;
 let launches = [];
+let launchConfigs = [];
+let editingLaunchId = null;
 let availableTopics = [];
 let selectedTopics = new Set();
 let currentBag = null;
@@ -41,7 +43,7 @@ function showToast(message, duration = 3200) {
 }
 
 function setPage(name) {
-  for (const page of ["hostsPage", "controlPage", "detailsPage", "rosbagPage"]) {
+  for (const page of ["hostsPage", "controlPage", "detailsPage", "launchSettingsPage", "rosbagPage"]) {
     $(page).classList.toggle("hidden", page !== name);
   }
 }
@@ -275,6 +277,321 @@ async function stopSelectedLaunch() {
     await refreshControl();
   } catch (error) {
     $("launchMessage").textContent = "停止失敗: " + error.message;
+  }
+}
+
+async function openLaunchSettings() {
+  if (!selectedHost) return;
+  setPage("launchSettingsPage");
+  $("launchConfigList").textContent = "launch設定を取得しています...";
+  $("launchEditorPanel").classList.add("hidden");
+  try {
+    const [config, runtime] = await Promise.all([
+      api("/api/hosts/" + selectedHost.id + "/launch-config"),
+      api("/api/hosts/" + selectedHost.id + "/launches"),
+    ]);
+    launchConfigs = config.launches || [];
+    launches = runtime.launches || [];
+    renderLaunchConfigList(config.workspaces || []);
+  } catch (error) {
+    $("launchConfigList").textContent = "launch設定を取得できません: " + error.message;
+  }
+}
+
+function renderLaunchConfigList(workspaces = []) {
+  const root = $("launchConfigList");
+  root.replaceChildren();
+  const saved = $("savedWorkspaceSelect");
+  const previousWorkspace = saved.value;
+  saved.replaceChildren(new Option("登録済みWorkspaceから選択", ""));
+  for (const workspace of workspaces) {
+    saved.add(new Option(workspace, workspace));
+  }
+  if ([...saved.options].some((option) => option.value === previousWorkspace)) {
+    saved.value = previousWorkspace;
+  }
+
+  if (!launchConfigs.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-card";
+    empty.textContent = "launchが登録されていません。「launchを追加」から登録してください。";
+    root.append(empty);
+    return;
+  }
+
+  for (const entry of launchConfigs) {
+    const runtime = launches.find((item) => item.id === entry.id);
+    const status = runtime?.status || "STOPPED";
+    const active = ["STARTING", "RUNNING", "STOPPING"].includes(status);
+    const card = document.createElement("article");
+    card.className = "launch-config-card";
+
+    const heading = document.createElement("div");
+    heading.className = "launch-config-heading";
+    const title = document.createElement("strong");
+    title.textContent = entry.display_name || entry.id;
+    const state = document.createElement("span");
+    state.className = "launch-config-state " + (active ? "active" : status === "ERROR" ? "error" : "");
+    state.textContent = status;
+    heading.append(title, state);
+
+    const meta = document.createElement("div");
+    meta.className = "launch-config-meta";
+    meta.textContent = entry.package + " / " + entry.launch_file +
+      " · Domain ID " + entry.ros_domain_id;
+
+    const path = document.createElement("div");
+    path.className = "launch-config-path";
+    path.textContent = entry.workspace;
+
+    const actions = document.createElement("div");
+    actions.className = "button-row launch-config-actions";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "secondary-button";
+    edit.textContent = "編集";
+    edit.disabled = active;
+    edit.addEventListener("click", () => editLaunchConfig(entry));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger-button compact-danger";
+    remove.textContent = "削除";
+    remove.disabled = active;
+    remove.addEventListener("click", () => deleteLaunchConfig(entry));
+    actions.append(edit, remove);
+
+    if (active) {
+      const warning = document.createElement("p");
+      warning.className = "help-text";
+      warning.textContent = "実行中のため編集・削除できません。先にlaunchを停止してください。";
+      card.append(heading, meta, path, warning, actions);
+    } else {
+      card.append(heading, meta, path, actions);
+    }
+    root.append(card);
+  }
+}
+
+function addLaunchArgument(name = "", value = "") {
+  const root = $("launchArguments");
+  const row = document.createElement("div");
+  row.className = "launch-argument-row";
+  const nameInput = document.createElement("input");
+  nameInput.className = "launch-argument-name";
+  nameInput.placeholder = "引数名";
+  nameInput.value = name;
+  nameInput.setAttribute("aria-label", "Launch引数名");
+  const valueInput = document.createElement("input");
+  valueInput.className = "launch-argument-value";
+  valueInput.placeholder = "値";
+  valueInput.value = String(value);
+  valueInput.setAttribute("aria-label", "Launch引数値");
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "small-button";
+  remove.textContent = "削除";
+  remove.addEventListener("click", () => row.remove());
+  row.append(nameInput, valueInput, remove);
+  root.append(row);
+}
+
+function collectLaunchArguments() {
+  const result = {};
+  for (const row of $("launchArguments").querySelectorAll(".launch-argument-row")) {
+    const name = row.querySelector(".launch-argument-name").value.trim();
+    const value = row.querySelector(".launch-argument-value").value;
+    if (!name) throw new Error("Launch引数名を入力してください。");
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error("Launch引数名は英字で始まる英数字・アンダースコアにしてください。");
+    }
+    if (Object.hasOwn(result, name)) throw new Error("Launch引数名が重複しています: " + name);
+    result[name] = value;
+  }
+  return result;
+}
+
+function currentLaunchEntry() {
+  const workspace = $("launchWorkspacePath").value.trim();
+  const packageName = $("launchPackage").value;
+  const launchFile = $("launchFile").value;
+  const displayName = $("launchDisplayName").value.trim();
+  if (!displayName) throw new Error("表示名を入力してください。");
+  if (!workspace.startsWith("/")) throw new Error("Workspaceは絶対パスで入力してください。");
+  if (!packageName || !launchFile) throw new Error("PackageとLaunchファイルを選択してください。");
+  const domainId = Number($("launchDomainId").value);
+  if (!Number.isInteger(domainId) || domainId < 0 || domainId > 232) {
+    throw new Error("ROS_DOMAIN_IDは0〜232の整数にしてください。");
+  }
+  const id = editingLaunchId || (
+    "launch_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 9)
+  );
+  return {
+    id,
+    display_name: displayName,
+    workspace,
+    package: packageName,
+    launch_file: launchFile,
+    ros_domain_id: domainId,
+    arguments: collectLaunchArguments(),
+  };
+}
+
+async function loadWorkspacePackages(preferredPackage = "", preferredFile = "") {
+  const workspace = $("launchWorkspacePath").value.trim();
+  const select = $("launchPackage");
+  const fileSelect = $("launchFile");
+  select.disabled = true;
+  fileSelect.disabled = true;
+  select.replaceChildren(new Option("Packageを取得しています...", ""));
+  fileSelect.replaceChildren(new Option("Packageを選択してください", ""));
+  $("workspaceDiscoveryMessage").textContent = "Workspace内のPackageを検索しています...";
+  try {
+    const data = await api(
+      "/api/hosts/" + selectedHost.id + "/workspaces/packages?workspace=" +
+      encodeURIComponent(workspace)
+    );
+    select.replaceChildren(new Option("Packageを選択", ""));
+    for (const packageName of data.packages || []) {
+      select.add(new Option(packageName, packageName));
+    }
+    select.disabled = !(data.packages || []).length;
+    $("workspaceDiscoveryMessage").textContent =
+      "Packageを " + (data.packages || []).length + " 件取得しました。";
+    if (preferredPackage && [...select.options].some((option) => option.value === preferredPackage)) {
+      select.value = preferredPackage;
+      await loadWorkspaceLaunchFiles(preferredFile);
+    }
+  } catch (error) {
+    select.replaceChildren(new Option("Packageを取得できません", ""));
+    $("workspaceDiscoveryMessage").textContent = "Package取得失敗: " + error.message;
+  }
+}
+
+async function loadWorkspaceLaunchFiles(preferredFile = "") {
+  const workspace = $("launchWorkspacePath").value.trim();
+  const packageName = $("launchPackage").value;
+  const select = $("launchFile");
+  select.disabled = true;
+  select.replaceChildren(new Option("Launchファイルを取得しています...", ""));
+  if (!packageName) {
+    select.replaceChildren(new Option("Packageを選択してください", ""));
+    return;
+  }
+  $("workspaceDiscoveryMessage").textContent = "Launchファイルを検索しています...";
+  try {
+    const data = await api(
+      "/api/hosts/" + selectedHost.id + "/workspaces/launch-files?workspace=" +
+      encodeURIComponent(workspace) + "&package=" + encodeURIComponent(packageName)
+    );
+    select.replaceChildren(new Option("Launchファイルを選択", ""));
+    for (const fileName of data.launch_files || []) {
+      select.add(new Option(fileName, fileName));
+    }
+    select.disabled = !(data.launch_files || []).length;
+    $("workspaceDiscoveryMessage").textContent =
+      "Launchファイルを " + (data.launch_files || []).length + " 件取得しました。";
+    if (preferredFile && [...select.options].some((option) => option.value === preferredFile)) {
+      select.value = preferredFile;
+    }
+  } catch (error) {
+    select.replaceChildren(new Option("Launchファイルを取得できません", ""));
+    $("workspaceDiscoveryMessage").textContent = "Launchファイル取得失敗: " + error.message;
+  }
+}
+
+async function showLaunchEditor(entry = null) {
+  editingLaunchId = entry ? entry.id : null;
+  $("launchEditorTitle").textContent = entry ? "launchを編集" : "launchを追加";
+  $("launchConfigForm").reset();
+  $("launchArguments").replaceChildren();
+  $("launchDisplayName").value = entry?.display_name || "";
+  $("launchWorkspacePath").value = entry?.workspace || "";
+  $("launchDomainId").value = entry?.ros_domain_id ?? selectedHost?.domain_id ?? 32;
+  $("savedWorkspaceSelect").value = entry?.workspace || "";
+  $("launchPackage").replaceChildren(new Option("Workspaceを指定してください", ""));
+  $("launchPackage").disabled = true;
+  $("launchFile").replaceChildren(new Option("Packageを選択してください", ""));
+  $("launchFile").disabled = true;
+  $("workspaceDiscoveryMessage").textContent = "";
+  if (entry) {
+    for (const [name, value] of Object.entries(entry.arguments || {})) {
+      addLaunchArgument(name, value);
+    }
+  }
+  $("launchEditorPanel").classList.remove("hidden");
+  $("launchEditorPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (entry?.workspace) {
+    await loadWorkspacePackages(entry.package, entry.launch_file);
+  }
+}
+
+async function editLaunchConfig(entry) {
+  const runtime = launches.find((item) => item.id === entry.id);
+  if (runtime && ["STARTING", "RUNNING", "STOPPING"].includes(runtime.status)) {
+    showToast("実行中のlaunchは編集できません。先に停止してください。");
+    return;
+  }
+  await showLaunchEditor(entry);
+}
+
+async function deleteLaunchConfig(entry) {
+  if (!window.confirm("「" + entry.display_name + "」をlaunch設定から削除しますか？")) return;
+  try {
+    const next = launchConfigs.filter((item) => item.id !== entry.id);
+    const result = await api("/api/hosts/" + selectedHost.id + "/launch-config", {
+      method: "PUT", body: JSON.stringify({ launches: next }),
+    });
+    launchConfigs = result.launches || next;
+    renderLaunchConfigList(result.workspaces || []);
+    await refreshControl();
+    showToast("launch設定を削除しました。");
+  } catch (error) {
+    showToast("launch設定の削除に失敗しました: " + error.message, 6000);
+  }
+}
+
+async function validateLaunchEditor() {
+  try {
+    const entry = currentLaunchEntry();
+    $("validateLaunchConfig").disabled = true;
+    $("launchConfigMessage").textContent = "Workspace・Package・Launchファイルを検証しています...";
+    await api("/api/hosts/" + selectedHost.id + "/launch-config/validate", {
+      method: "POST", body: JSON.stringify({ entry }),
+    });
+    $("launchConfigMessage").textContent = "設定は正常です。保存できます。";
+  } catch (error) {
+    $("launchConfigMessage").textContent = "検証失敗: " + error.message;
+  } finally {
+    $("validateLaunchConfig").disabled = false;
+  }
+}
+
+async function saveLaunchEditor(event) {
+  event.preventDefault();
+  try {
+    const entry = currentLaunchEntry();
+    $("saveLaunchConfig").disabled = true;
+    $("launchConfigMessage").textContent = "設定を検証・保存しています...";
+    await api("/api/hosts/" + selectedHost.id + "/launch-config/validate", {
+      method: "POST", body: JSON.stringify({ entry }),
+    });
+    const next = [...launchConfigs];
+    const index = next.findIndex((item) => item.id === entry.id);
+    if (index >= 0) next[index] = entry;
+    else next.push(entry);
+    const result = await api("/api/hosts/" + selectedHost.id + "/launch-config", {
+      method: "PUT", body: JSON.stringify({ launches: next }),
+    });
+    launchConfigs = result.launches || next;
+    $("launchEditorPanel").classList.add("hidden");
+    editingLaunchId = null;
+    renderLaunchConfigList(result.workspaces || []);
+    await refreshControl();
+    showToast("launch設定を保存しました。Agentの再起動は不要です。");
+  } catch (error) {
+    $("launchConfigMessage").textContent = "保存失敗: " + error.message;
+  } finally {
+    $("saveLaunchConfig").disabled = false;
   }
 }
 
@@ -612,6 +929,27 @@ $("backToHosts").addEventListener("click", () => setPage("hostsPage"));
 $("backToHostsFromBag").addEventListener("click", () => setPage("hostsPage"));
 $("backToControl").addEventListener("click", () => setPage("controlPage"));
 $("detailsButton").addEventListener("click", openDetails);
+$("launchSettingsButton").addEventListener("click", openLaunchSettings);
+$("backToControlFromLaunchSettings").addEventListener("click", () => setPage("controlPage"));
+$("addLaunchConfigButton").addEventListener("click", () => showLaunchEditor());
+$("cancelLaunchEditor").addEventListener("click", () => {
+  editingLaunchId = null;
+  $("launchEditorPanel").classList.add("hidden");
+});
+$("launchConfigForm").addEventListener("submit", saveLaunchEditor);
+$("validateLaunchConfig").addEventListener("click", validateLaunchEditor);
+$("loadWorkspacePackages").addEventListener("click", () => loadWorkspacePackages());
+$("launchPackage").addEventListener("change", () => loadWorkspaceLaunchFiles());
+$("addLaunchArgument").addEventListener("click", () => addLaunchArgument());
+$("savedWorkspaceSelect").addEventListener("change", (event) => {
+  if (event.currentTarget.value) {
+    $("launchWorkspacePath").value = event.currentTarget.value;
+    $("launchPackage").replaceChildren(new Option("Package一覧を取得してください", ""));
+    $("launchPackage").disabled = true;
+    $("launchFile").replaceChildren(new Option("Packageを選択してください", ""));
+    $("launchFile").disabled = true;
+  }
+});
 $("launchSelect").addEventListener("change", updateLaunchButtons);
 $("launchStart").addEventListener("click", startSelectedLaunch);
 $("launchStop").addEventListener("click", stopSelectedLaunch);
@@ -643,7 +981,7 @@ let pollTimer = null;
 
 function showLoginPage() {
   $("appHeader").classList.add("hidden");
-  for (const page of ["hostsPage", "controlPage", "detailsPage", "rosbagPage"]) {
+  for (const page of ["hostsPage", "controlPage", "detailsPage", "launchSettingsPage", "rosbagPage"]) {
     $(page).classList.add("hidden");
   }
   $("loginPage").classList.remove("hidden");

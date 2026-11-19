@@ -89,6 +89,7 @@
           <button id="launchStart" class="primary-button large-action">起動</button>
           <button id="launchStop" class="danger-button large-action">停止</button>
         </div>
+        <button id="launchSettingsButton" class="secondary-button launch-settings-button">⚙ launch設定</button>
         <p class="help-text">● 実行中 / ○ 停止中 / ◐ 起動中 / ◌ 停止処理中 / ! エラー。状態管理・一括停止の対象は管理Agentが起動したlaunchのみです。端末から直接起動したlaunchは実行中として表示しません。</p>
         <div id="launchMessage" class="inline-message" aria-live="polite"></div>
       </section>
@@ -151,6 +152,66 @@
       <section class="panel">
         <h2>ROSbag</h2>
         <dl id="detailRosbagInfo" class="detail-grid"></dl>
+      </section>
+    </section>
+
+    <section id="launchSettingsPage" class="page hidden">
+      <div class="page-heading">
+        <button id="backToControlFromLaunchSettings" class="secondary-button">← PC操作画面</button>
+        <h1>launch設定</h1>
+      </div>
+      <p class="help-text">このPCで起動するlaunchを登録・編集します。設定は対象PCのlaunches.yamlに保存されます。</p>
+      <div id="launchConfigList" class="launch-config-list">
+        <div class="muted">設定を読み込んでいます...</div>
+      </div>
+      <button id="addLaunchConfigButton" class="primary-button">＋ launchを追加</button>
+
+      <section id="launchEditorPanel" class="panel hidden">
+        <h2 id="launchEditorTitle">launchを追加</h2>
+        <form id="launchConfigForm" class="form-grid">
+          <label class="span-all">表示名
+            <input id="launchDisplayName" maxlength="120" required placeholder="例：敵ロボット全体起動">
+          </label>
+          <label class="span-all">登録済みWorkspace
+            <select id="savedWorkspaceSelect" class="large-select">
+              <option value="">登録済みWorkspaceから選択</option>
+            </select>
+          </label>
+          <label class="span-all">Workspace絶対パス
+            <input id="launchWorkspacePath" required placeholder="/home/user/ros2_ws">
+          </label>
+          <div class="span-all">
+            <button id="loadWorkspacePackages" class="secondary-button" type="button">Package一覧を取得</button>
+            <div id="workspaceDiscoveryMessage" class="inline-message" aria-live="polite"></div>
+          </div>
+          <label>Package
+            <select id="launchPackage" class="large-select" required disabled>
+              <option value="">Workspaceを指定してください</option>
+            </select>
+          </label>
+          <label>Launchファイル
+            <select id="launchFile" class="large-select" required disabled>
+              <option value="">Packageを選択してください</option>
+            </select>
+          </label>
+          <label>ROS_DOMAIN_ID
+            <input id="launchDomainId" type="number" min="0" max="232" required value="32">
+          </label>
+          <div class="span-all">
+            <div class="section-title">
+              <h2>Launch引数（固定値）</h2>
+              <button id="addLaunchArgument" class="small-button" type="button">＋ 引数追加</button>
+            </div>
+            <div id="launchArguments" class="launch-arguments"></div>
+            <p class="help-text">ここで登録した値を毎回使用します。起動時に引数を変更する機能はありません。</p>
+          </div>
+          <div class="span-all button-row">
+            <button id="validateLaunchConfig" class="secondary-button large-action" type="button">設定を検証</button>
+            <button id="saveLaunchConfig" class="primary-button large-action" type="submit">保存</button>
+          </div>
+          <button id="cancelLaunchEditor" class="secondary-button span-all" type="button">キャンセル</button>
+          <div id="launchConfigMessage" class="inline-message span-all" aria-live="polite"></div>
+        </form>
       </section>
     </section>
 

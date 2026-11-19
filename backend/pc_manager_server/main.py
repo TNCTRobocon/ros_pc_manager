@@ -57,6 +57,14 @@ class HostUpdate(HostCreate):
     """Editable public host settings; the Agent token is intentionally unchanged."""
 
 
+class LaunchConfigUpdate(BaseModel):
+    launches: list[dict[str, Any]]
+
+
+class LaunchConfigValidation(BaseModel):
+    entry: dict[str, Any]
+
+
 class LaunchStart(BaseModel):
     launch_id: str = Field(min_length=1, max_length=80)
 
@@ -268,6 +276,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await client_for(host_id).launches()
         except Exception as exc:
             raise agent_error(exc, "PC agent unavailable")
+
+    @app.get("/api/hosts/{host_id}/launch-config")
+    async def host_launch_config(host_id: int):
+        try:
+            return await client_for(host_id).launch_config()
+        except Exception as exc:
+            raise agent_error(exc, "Launch configuration retrieval failed")
+
+    @app.put("/api/hosts/{host_id}/launch-config")
+    async def update_host_launch_config(host_id: int, body: LaunchConfigUpdate):
+        try:
+            return await client_for(host_id).update_launch_config(body.launches)
+        except Exception as exc:
+            raise agent_error(exc, "Launch configuration update failed")
+
+    @app.post("/api/hosts/{host_id}/launch-config/validate")
+    async def validate_host_launch_config(host_id: int, body: LaunchConfigValidation):
+        try:
+            return await client_for(host_id).validate_launch_config(body.entry)
+        except Exception as exc:
+            raise agent_error(exc, "Launch configuration validation failed")
+
+    @app.get("/api/hosts/{host_id}/workspaces/packages")
+    async def host_workspace_packages(host_id: int, workspace: str):
+        try:
+            return await client_for(host_id).workspace_packages(workspace)
+        except Exception as exc:
+            raise agent_error(exc, "Workspace package discovery failed")
+
+    @app.get("/api/hosts/{host_id}/workspaces/launch-files")
+    async def host_workspace_launch_files(host_id: int, workspace: str, package: str):
+        try:
+            return await client_for(host_id).workspace_launch_files(workspace, package)
+        except Exception as exc:
+            raise agent_error(exc, "Workspace launch-file discovery failed")
 
     @app.post("/api/hosts/{host_id}/launches/start")
     async def start_launch(host_id: int, body: LaunchStart):

@@ -8,6 +8,7 @@ import signal
 import subprocess
 import threading
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -105,6 +106,187 @@ class LaunchManager:
             ids.add(launch_id)
             result.append(entry)
         return result
+
+    @staticmethod
+    def _workspace_path(value: str | Path) -> Path:
+        workspace = Path(str(value)).expanduser()
+        if not workspace.is_absolute():
+            raise ValueError("Workspaceは絶対パスで指定してください")
+        workspace = workspace.resolve()
+        if not workspace.is_dir():
+            raise ValueError(f"Workspaceが存在しません: {workspace}")
+        setup = workspace / "install" / "setup.bash"
+        if not setup.is_file():
+            raise ValueError(f"Workspaceがビルドされていません: {setup} がありません")
+        return workspace
+
+    @staticmethod
+    def _share_roots(workspace: Path) -> list[Path]:
+        install = workspace / "install"
+        roots: list[Path] = []
+        merged = install / "share"
+        if merged.is_dir():
+            roots.append(merged)
+        try:
+            prefixes = list(install.iterdir())
+        except OSError:
+            prefixes = []
+        for prefix in prefixes:
+            share = prefix / "share"
+            if prefix.is_dir() and share.is_dir() and share not in roots:
+                roots.append(share)
+        return roots
+
+    def workspace_packages(self, workspace_value: str | Path) -> list[str]:
+        workspace = self._workspace_path(workspace_value)
+        packages: set[str] = set()
+        for share_root in self._share_roots(workspace):
+            try:
+                package_dirs = list(share_root.iterdir())
+            except OSError:
+                continue
+            for package_dir in package_dirs:
+                package_xml = package_dir / "package.xml"
+                if not package_dir.is_dir() or not package_xml.is_file():
+                    continue
+                try:
+                    package_name = (ET.parse(package_xml).getroot().findtext("name") or "").strip()
+                except (ET.ParseError, OSError):
+                    continue
+                if package_name and PACKAGE_PATTERN.fullmatch(package_name):
+                    packages.add(package_name)
+        return sorted(packages)
+
+    def workspace_launch_files(
+        self, workspace_value: str | Path, package: str
+    ) -> list[str]:
+        if not PACKAGE_PATTERN.fullmatch(package):
+            raise ValueError(f"Invalid ROS package name: {package!r}")
+        workspace = self._workspace_path(workspace_value)
+        if package not in self.workspace_packages(workspace):
+            raise ValueError(f"Package is not installed in this Workspace: {package}")
+        files: set[str] = set()
+        for share_root in self._share_roots(workspace):
+            launch_dir = share_root / package / "launch"
+            if not launch_dir.is_dir():
+                continue
+            for path in launch_dir.iterdir():
+                if path.is_file() and (
+                    path.name.endswith(".launch.py")
+                    or path.name.endswith(".launch.xml")
+                    or path.name.endswith(".launch.yaml")
+                    or path.name.endswith(".launch.yml")
+                ):
+                    files.add(path.name)
+        return sorted(files)
+
+    def get_launch_config(self) -> dict[str, Any]:
+        with self._lock:
+            entries = self._load_launches()
+            workspaces = sorted({
+                str(Path(str(entry.get("workspace", ""))).expanduser())
+                for entry in entries if entry.get("workspace")
+            })
+            return {"launches": entries, "workspaces": workspaces}
+
+    def validate_launch_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(entry, dict):
+            raise ValueError("launch設定はオブジェクトで指定してください")
+        launch_id = str(entry.get("id", "")).strip()
+        if not ID_PATTERN.fullmatch(launch_id):
+            raise ValueError("launch IDが不正です")
+        display_name = str(entry.get("display_name", "")).strip()
+        if not display_name or len(display_name) > 120:
+            raise ValueError("表示名は1〜120文字で指定してください")
+
+        workspace = self._workspace_path(str(entry.get("workspace", "")))
+        package = str(entry.get("package", "")).strip()
+        if not PACKAGE_PATTERN.fullmatch(package):
+            raise ValueError(f"Package名が不正です: {package!r}")
+        packages = self.workspace_packages(workspace)
+        if package not in packages:
+            raise ValueError(f"PackageがWorkspaceにインストールされていません: {package}")
+
+        launch_file = str(entry.get("launch_file", "")).strip()
+        if (
+            not launch_file
+            or "/" in launch_file
+            or "\\" in launch_file
+            or ".." in launch_file
+            or launch_file not in self.workspace_launch_files(workspace, package)
+        ):
+            raise ValueError(f"LaunchファイルがWorkspace内に見つかりません: {launch_file!r}")
+
+        try:
+            domain_id = int(entry.get("ros_domain_id", self.settings.default_domain_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ROS_DOMAIN_IDは整数で指定してください") from exc
+        if not 0 <= domain_id <= 232:
+            raise ValueError("ROS_DOMAIN_IDは0〜232で指定してください")
+
+        arguments = entry.get("arguments", {}) or {}
+        if not isinstance(arguments, dict):
+            raise ValueError("Launch引数は名前と値のマップで指定してください")
+        normalized_arguments: dict[str, Any] = {}
+        for key, value in arguments.items():
+            key = str(key).strip()
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", key):
+                raise ValueError(f"Launch引数名が不正です: {key!r}")
+            if isinstance(value, (dict, list)) or value is None:
+                raise ValueError(f"Launch引数 {key} は文字列・数値・真偽値で指定してください")
+            normalized_arguments[key] = value
+
+        return {
+            "id": launch_id,
+            "display_name": display_name,
+            "workspace": str(workspace),
+            "package": package,
+            "launch_file": launch_file,
+            "ros_domain_id": domain_id,
+            "arguments": normalized_arguments,
+        }
+
+    def replace_launch_config(self, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        if not isinstance(entries, list):
+            raise ValueError("launchesはリストで指定してください")
+        with self._lock:
+            normalized = [self.validate_launch_entry(entry) for entry in entries]
+            ids = [entry["id"] for entry in normalized]
+            if len(ids) != len(set(ids)):
+                raise ValueError("launch IDが重複しています")
+
+            old_entries = {entry["id"]: entry for entry in self._load_launches()}
+            new_entries = {entry["id"]: entry for entry in normalized}
+            for launch_id, state in self.states.items():
+                if self._alive(state):
+                    old_entry = old_entries.get(launch_id)
+                    new_entry = new_entries.get(launch_id)
+                    if old_entry != new_entry:
+                        raise RuntimeError(
+                            f"実行中のlaunchは編集・削除できません。先に停止してください: {launch_id}"
+                        )
+
+            self.settings.launches_file.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.settings.launches_file.with_name(
+                self.settings.launches_file.name + ".tmp"
+            )
+            payload = yaml.safe_dump(
+                {"launches": normalized},
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            temp.write_text(payload, encoding="utf-8")
+            try:
+                temp.chmod(0o600)
+            except OSError:
+                pass
+            temp.replace(self.settings.launches_file)
+
+            for launch_id in list(self.states):
+                if launch_id not in new_entries and not self._alive(self.states[launch_id]):
+                    self.states.pop(launch_id, None)
+            self._save_state()
+            return self.get_launch_config()
 
     def list_launches(self) -> dict[str, Any]:
         with self._lock:

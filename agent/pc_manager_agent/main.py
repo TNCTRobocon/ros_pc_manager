@@ -11,11 +11,20 @@ from typing import Any
 
 import psutil
 from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from .config import AgentSettings, load_agent_settings
 from .launch_manager import LaunchManager
+
+
+class LaunchConfigUpdate(BaseModel):
+    launches: list[dict[str, Any]]
+
+
+class LaunchConfigValidation(BaseModel):
+    entry: dict[str, Any]
 
 
 def create_app(settings: AgentSettings) -> FastAPI:
@@ -106,6 +115,45 @@ def create_app(settings: AgentSettings) -> FastAPI:
             "system": system,
             "launches": launches,
         }
+
+    @app.get("/api/launch-config", dependencies=[Depends(require_token)])
+    async def launch_config():
+        return await run_in_threadpool(launch_manager.get_launch_config)
+
+    @app.put("/api/launch-config", dependencies=[Depends(require_token)])
+    async def update_launch_config(body: LaunchConfigUpdate):
+        try:
+            return await run_in_threadpool(launch_manager.replace_launch_config, body.launches)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/launch-config/validate", dependencies=[Depends(require_token)])
+    async def validate_launch_config(body: LaunchConfigValidation):
+        try:
+            entry = await run_in_threadpool(launch_manager.validate_launch_entry, body.entry)
+            return {"ok": True, "entry": entry}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/workspaces/packages", dependencies=[Depends(require_token)])
+    async def workspace_packages(workspace: str):
+        try:
+            packages = await run_in_threadpool(launch_manager.workspace_packages, workspace)
+            return {"workspace": workspace, "packages": packages}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/workspaces/launch-files", dependencies=[Depends(require_token)])
+    async def workspace_launch_files(workspace: str, package: str):
+        try:
+            files = await run_in_threadpool(
+                launch_manager.workspace_launch_files, workspace, package
+            )
+            return {"workspace": workspace, "package": package, "launch_files": files}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/launches", dependencies=[Depends(require_token)])
     async def launches():

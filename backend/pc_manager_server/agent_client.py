@@ -10,13 +10,14 @@ class AgentClient:
         self.headers = {"Authorization": f"Bearer {token}"}
         self.timeout = timeout
 
-    async def request(self, method: str, path: str, payload: dict | None = None):
+    async def request(self, method: str, path: str, payload: dict | None = None, params: dict | None = None):
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.request(
                 method,
                 self.base_url + path,
                 headers=self.headers,
                 json=payload,
+                params=params,
             )
         response.raise_for_status()
         return response.json()
@@ -26,6 +27,27 @@ class AgentClient:
 
     async def launches(self):
         return await self.request("GET", "/api/launches")
+
+    async def launch_config(self):
+        return await self.request("GET", "/api/launch-config")
+
+    async def update_launch_config(self, launches: list[dict]):
+        return await self.request("PUT", "/api/launch-config", {"launches": launches})
+
+    async def validate_launch_config(self, entry: dict):
+        return await self.request("POST", "/api/launch-config/validate", {"entry": entry})
+
+    async def workspace_packages(self, workspace: str):
+        return await self.request(
+            "GET", "/api/workspaces/packages", params={"workspace": workspace}
+        )
+
+    async def workspace_launch_files(self, workspace: str, package: str):
+        return await self.request(
+            "GET",
+            "/api/workspaces/launch-files",
+            params={"workspace": workspace, "package": package},
+        )
 
     async def start_launch(self, launch_id: str):
         return await self.request("POST", f"/api/launches/{launch_id}/start", {})

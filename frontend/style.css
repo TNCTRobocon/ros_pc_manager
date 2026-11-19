@@ -107,3 +107,26 @@ p { margin: 5px 0 0; }
   .span-all { grid-column: auto; }
   h1 { font-size: 1.35rem; }
 }
+
+
+.launch-settings-button { width: 100%; margin-top: 10px; min-height: 48px; font-weight: 750; }
+.launch-config-list { display: grid; gap: 10px; }
+.launch-config-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+.launch-config-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.launch-config-heading strong { font-size: 1.03rem; overflow-wrap: anywhere; }
+.launch-config-state { color: var(--muted); font-size: .78rem; font-weight: 850; white-space: nowrap; }
+.launch-config-state.active { color: var(--green); }
+.launch-config-state.error { color: var(--red); }
+.launch-config-meta { margin-top: 7px; font-size: .88rem; color: var(--text); overflow-wrap: anywhere; }
+.launch-config-path { margin-top: 5px; font-size: .78rem; color: var(--muted); overflow-wrap: anywhere; }
+.launch-config-actions { margin-top: 12px; }
+.launch-config-actions > button { flex: 1; }
+.compact-danger { min-height: 42px; padding: 8px 12px; border-radius: 10px; font-size: .9rem; }
+.launch-arguments { display: grid; gap: 8px; }
+.launch-argument-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 7px; align-items: center; }
+.launch-argument-row input { min-width: 0; min-height: 44px; padding: 9px; }
+.launch-argument-row button { min-height: 40px; }
+@media (max-width: 480px) {
+  .launch-argument-row { grid-template-columns: 1fr 1fr; }
+  .launch-argument-row button { grid-column: 1 / -1; }
+}

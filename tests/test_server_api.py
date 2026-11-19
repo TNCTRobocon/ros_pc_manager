@@ -122,3 +122,91 @@ def test_server_startup_rebuilds_hosts_yaml_from_sqlite(tmp_path):
         "domain_id": 32,
     }]
     assert token not in hosts_yaml.read_text(encoding="utf-8")
+
+
+def test_launch_configuration_routes_proxy_to_registered_agent(tmp_path, monkeypatch):
+    import pc_manager_server.main as server_module
+
+    class FakeAgentClient:
+        def __init__(self, address, port, token, timeout):
+            self.address = address
+
+        async def launch_config(self):
+            return {
+                "launches": [{
+                    "id": "demo",
+                    "display_name": "Demo",
+                    "workspace": "/opt/ws",
+                    "package": "demo_pkg",
+                    "launch_file": "demo.launch.py",
+                    "ros_domain_id": 32,
+                    "arguments": {},
+                }],
+                "workspaces": ["/opt/ws"],
+            }
+
+        async def update_launch_config(self, launches):
+            return {"launches": launches, "workspaces": sorted({
+                item["workspace"] for item in launches
+            })}
+
+        async def validate_launch_config(self, entry):
+            return {"ok": True, "entry": entry}
+
+        async def workspace_packages(self, workspace):
+            return {"workspace": workspace, "packages": ["demo_pkg"]}
+
+        async def workspace_launch_files(self, workspace, package):
+            return {
+                "workspace": workspace,
+                "package": package,
+                "launch_files": ["demo.launch.py"],
+            }
+
+    monkeypatch.setattr(server_module, "AgentClient", FakeAgentClient)
+    client = TestClient(create_app(make_settings(tmp_path)))
+    login = client.post("/api/login", json={"password": "correct-horse-battery"})
+    headers = {"X-Manager-Session": login.json()["session_token"]}
+    registered = client.post("/api/hosts", headers=headers, json={
+        "name": "robot-test",
+        "address": "192.0.2.81",
+        "port": 8765,
+        "domain_id": 32,
+    })
+    host_id = registered.json()["id"]
+
+    config = client.get(f"/api/hosts/{host_id}/launch-config", headers=headers)
+    assert config.status_code == 200
+    assert config.json()["workspaces"] == ["/opt/ws"]
+
+    entry = config.json()["launches"][0]
+    entry["display_name"] = "Edited"
+    updated = client.put(
+        f"/api/hosts/{host_id}/launch-config",
+        headers=headers,
+        json={"launches": [entry]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["launches"][0]["display_name"] == "Edited"
+
+    validated = client.post(
+        f"/api/hosts/{host_id}/launch-config/validate",
+        headers=headers,
+        json={"entry": entry},
+    )
+    assert validated.status_code == 200
+    assert validated.json()["ok"] is True
+
+    packages = client.get(
+        f"/api/hosts/{host_id}/workspaces/packages",
+        headers=headers,
+        params={"workspace": "/opt/ws"},
+    )
+    assert packages.json()["packages"] == ["demo_pkg"]
+
+    files = client.get(
+        f"/api/hosts/{host_id}/workspaces/launch-files",
+        headers=headers,
+        params={"workspace": "/opt/ws", "package": "demo_pkg"},
+    )
+    assert files.json()["launch_files"] == ["demo.launch.py"]
