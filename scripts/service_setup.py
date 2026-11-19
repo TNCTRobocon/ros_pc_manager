@@ -108,8 +108,10 @@ def ensure_agent_files(
     if not isinstance(agent, dict) or not isinstance(paths, dict):
         raise SetupError("agent.yaml の agent / paths はマッピングである必要があります。")
 
-    launches_value = str(paths.get("launches_file", "launches.yaml"))
-    launches_path = resolve_config_path(launches_value, config_path)
+    launches_raw = paths.get("launches_file", "launches.yaml")
+    if not isinstance(launches_raw, str) or not launches_raw.strip():
+        raise SetupError("agent.yaml の paths.launches_file は空でないパスを指定してください。")
+    launches_path = resolve_config_path(launches_raw, config_path)
     if not launches_path.exists():
         atomic_write_yaml(launches_path, {"launches": []})
         print(f"空のlaunch設定を作成しました: {launches_path}")
@@ -172,7 +174,10 @@ def validate_agent_config(root: Path) -> None:
         ) from exc
 
     config_path = root / "agent" / "config" / "agent.yaml"
-    settings = load_agent_settings(config_path)
+    try:
+        settings = load_agent_settings(config_path)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SetupError(f"Agent設定を読み込めません: {exc}") from exc
     if not settings.ros_setup.is_file():
         raise SetupError(f"ROS 2 setup.bashが見つかりません: {settings.ros_setup}")
 
