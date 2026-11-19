@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-mkdir -p agent/config
-[ -f agent/config/agent.yaml ] || cp agent/config/agent.yaml.example agent/config/agent.yaml
-[ -f agent/config/launches.yaml ] || cp agent/config/launches.yaml.example agent/config/launches.yaml
-chmod 600 agent/config/agent.yaml
-echo "Edit agent/config/agent.yaml and launches.yaml before starting the Agent."
+
+[[ -x "$ROOT/.venv/bin/python" ]] || {
+  echo "./scripts/setup.sh を先に実行してください。" >&2
+  exit 1
+}
+
+# Prepare and validate Agent YAML without registering or starting a systemd service.
+exec "$ROOT/.venv/bin/python" "$ROOT/scripts/service_setup.py" prepare-agent

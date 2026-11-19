@@ -40,13 +40,17 @@ cd /home/miquiteru/ros_pc_manager
 
 config/server.yamlを確認します。初期値ではROS 2 Jazzyをsourceし、rosbagをvar/rosbagsへ保存します。親PCで独自メッセージ型を記録する場合は、ros.overlaysに必要なWorkspaceを追加してください。
 
-管理サーバを起動します。
+Manager Serverをsystemdに登録し、OS起動時の自動起動を有効にします。
 
 ~~~bash
-./scripts/run_server.sh
+./scripts/setup_server_service.sh
 ~~~
 
+このスクリプトは、存在しない場合だけconfig/server.yamlとconfig/domains.yamlをサンプルから作成し、ROS 2環境を検証してからサービス登録・自動起動ON・即時起動を行います。既存設定は上書きしません。通常ユーザーで実行してください（sudoはスクリプト内で要求されます）。
+
 初回起動時に管理パスワードが生成され、var/admin_password.txtに保存されます。ファイル権限は0600です。パスワードを確認し、スマートフォンから次のURLを開いてログインしてください。
+
+手動起動を使う場合は、従来どおり `./scripts/run_server.sh` を実行できます。ただし、systemdサービスと手動起動を同時に実行しないでください。
 
 ~~~text
 http://<親PCのIPアドレス>:8080/
@@ -60,10 +64,7 @@ http://<親PCのIPアドレス>:8080/
 
 ~~~bash
 ./scripts/setup.sh
-./scripts/prepare_agent_config.sh
 ~~~
-
-agent/config/agent.yamlとagent/config/launches.yamlを編集します。Agentのtokenには、親PCの画面でPC登録した際に一度だけ表示されるAgentトークンを設定してください。
 
 launches.yamlの例：
 
@@ -87,13 +88,21 @@ launches:
 
 起動前に、指定Workspaceのinstall/setup.bashが存在することを確認してください。launch引数はYAMLで固定し、画面から任意コマンドを送る機能は設けていません。
 
-Agentを起動します。
+親PCのWeb画面で、PC名・IPアドレス・Agentポート（既定8765）・デフォルトDomain IDを入力してPCを登録します。登録時に一度だけ表示されるAgent Tokenを控えてください。
+
+対象PCで、Agentをsystemdに登録してOS起動時の自動起動を有効にします。
 
 ~~~bash
-./scripts/run_agent.sh
+./scripts/setup_agent_service.sh
 ~~~
 
-親PCのWeb画面で、PC名・IPアドレス・Agentポート（既定8765）・デフォルトDomain IDを入力して登録します。PC登録時に表示されるトークンを対象PCのAgent設定へコピーします。親PC自身を操作対象に含める場合も、親PC上でAgentを起動し、親PCのLAN側IPアドレスを登録してください。
+初回は `agent/config/agent.yaml` と `agent/config/launches.yaml` を作成します。Agent Tokenが未設定の場合は対話入力を求めます。TokenをManagerで発行する前に実行しても、Token未設定のままサービスを有効化することはありません。Tokenは表示せず、agent.yamlを0600で保存します。
+
+launch設定ファイルが存在しない場合は `launches: []` の空設定を作成します。既存のagent.yaml / launches.yamlをテンプレートで上書きすることはありません（Tokenが未設定・仮値の場合はtoken項目だけ更新します）。登録済みlaunchがある場合は、ROS 2 Workspace・package・launchファイルを検証し、問題があればサービス登録前に停止します。launchが0件でもAgentは起動できます。launch設定はWeb画面のlaunch設定管理、またはYAML編集で追加してください。
+
+手動起動を使う場合は、先に `./scripts/prepare_agent_config.sh` で設定を作成・検証し、その後 `./scripts/run_agent.sh` を実行します。`prepare_agent_config.sh` はsystemd登録や自動起動設定を行いません。systemdサービスと手動起動を同時に実行しないでください。
+
+親PC自身も管理対象に含める場合は、親PCのWeb画面で親PC自身を登録し、親PC上でも `setup_agent_service.sh` を実行してください。Manager ServerとAgentは別サービスとして動作します。
 
 ## ROSbagの動作
 
@@ -117,9 +126,38 @@ sudo -n /usr/bin/systemctl poweroff
 
 許可する場合は、deploy/sudoers/ros-pc-manager.exampleの__AGENT_USER__をAgent実行ユーザーに置き換え、管理者がvisudoで検証して/etc/sudoers.d/ros-pc-managerへ設置してください。許可対象はsystemctl poweroffのみに限定します。Agentに任意のrootコマンド実行権限は与えません。
 
-## systemd
+## systemdによる自動起動
 
-deploy/systemd/*.service.exampleはテンプレートです。__RUN_USER__、__RUN_GROUP__、__PROJECT_ROOT__を実環境に置き換えてからsystemdへ登録してください。Agentの状態ファイルとログディレクトリはAgent実行ユーザーが書き込めるように準備してください。
+通常は次の2つのセットアップスクリプトを使用します。
+
+- 親PC：`./scripts/setup_server_service.sh`
+- 各管理対象PC：`./scripts/setup_agent_service.sh`
+
+どちらも、先に `./scripts/setup.sh` を実行してPython環境を構築してください。セットアップスクリプトは通常ユーザーで実行します。必要なsystemd登録時のみ内部でsudoを使用します。
+
+スクリプトはプロジェクトの配置先・実行ユーザー・グループを使ってsystemdユニットを生成します。生成済みユニットには管理マーカーを付けます。同名の既存ユニットに管理マーカーがない場合は、ユーザー独自設定を上書きしないよう処理を中止します。
+
+設定ファイルが既にある場合は上書きしません。Agent Tokenが未設定・仮値の場合、またはROS 2環境・launch設定の検証に失敗した場合は、自動起動を有効化しません。Agent TokenはManagerのPC登録で発行された値を使用してください。Manager側に登録されたTokenとAgent側のTokenは一致している必要があります。
+
+状態・ログの確認：
+
+~~~bash
+systemctl status pc-manager-server
+systemctl status pc-manager-agent
+journalctl -u pc-manager-server -f
+journalctl -u pc-manager-agent -f
+~~~
+
+自動起動の解除：
+
+~~~bash
+sudo systemctl disable --now pc-manager-server
+sudo systemctl disable --now pc-manager-agent
+~~~
+
+Agentサービスは `KillMode=process` を使用します。Agentサービスの再起動時に管理launchプロセスは終了せず、Agent再起動後にPIDとプロセス開始時刻から管理状態を復元します。
+
+`agent.yaml` の変更を反映する場合は `sudo systemctl restart pc-manager-agent` を実行してください。`server.yaml` の変更を反映する場合は、先にROSbag記録を停止してから `sudo systemctl restart pc-manager-server` を実行してください。Manager Serverの停止・再起動中はROSbag記録を継続できず、記録ファイルの正常確定も保証されません。
 
 ## セキュリティとネットワーク
 
@@ -135,7 +173,8 @@ deploy/systemd/*.service.exampleはテンプレートです。__RUN_USER__、__R
 
 ~~~bash
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m compileall -q backend agent tests
+bash -n scripts/setup_agent_service.sh scripts/setup_server_service.sh
+.venv/bin/python -m compileall -q scripts backend agent tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests -q
 node --check frontend/app.js
 ~~~

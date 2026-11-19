@@ -8,8 +8,8 @@ Type=simple
 User=__RUN_USER__
 Group=__RUN_GROUP__
 WorkingDirectory=__PROJECT_ROOT__
-Environment=ROS_PC_MANAGER_CONFIG=__PROJECT_ROOT__/config/server.yaml
-ExecStart=__PROJECT_ROOT__/.venv/bin/ros-pc-manager-server
+Environment=__SERVER_CONFIG_ENV__
+ExecStart=__SERVER_EXEC__
 Restart=on-failure
 RestartSec=3
 UMask=0077
