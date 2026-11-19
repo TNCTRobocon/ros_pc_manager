@@ -31,7 +31,6 @@
       <div class="page-heading">
         <div>
           <h1>登録済みPC</h1>
-          <p class="muted">同一LAN内のROS 2 PCを管理します。</p>
         </div>
       </div>
       <div id="hostCards" class="host-grid">
@@ -40,7 +39,6 @@
 
       <section id="registerPanel" class="panel register-panel">
         <h2 id="hostFormTitle">PCを登録</h2>
-        <p class="help-text">登録情報はSQLiteに保存し、config/hosts.yamlへ自動出力します。YAMLにはAgent認証トークンを出力しません。IP・ポート・Domain IDを変更した場合は、Agent側の設定との整合も確認してください。</p>
         <form id="registerForm" class="form-grid">
           <label>表示名
             <input name="name" required maxlength="80" placeholder="robot-a">
