@@ -412,25 +412,6 @@ async function refreshBagStatus() {
       state === "ERROR" ? "error" :
       recording ? "recording" : "stopped"
     );
-    const info = currentBag.recording_info;
-    $("bagPath").textContent = info && info.output_path
-      ? "保存先：" + info.output_path
-      : "保存先：親PC / " + (storage.root || "rosbags");
-
-    const freeGb = Number(storage.free_gb);
-    let storageText = Number.isFinite(freeGb)
-      ? "親PCの空き容量：" + freeGb.toFixed(2) + " GB"
-      : "親PCの空き容量：取得不可";
-    storageText += "（警告 " + Number(storage.warning_free_gb || 0).toFixed(1) +
-      " GB未満 / 新規記録不可 " + Number(storage.minimum_free_gb || 0).toFixed(1) + " GB未満）";
-    if (storage.low_space_warning) storageText += "\n警告：保存先の空き容量が少なくなっています。";
-    if (storage.cannot_start) storageText += "\n新しい記録を開始できません。空き容量を確保してください。";
-    $("bagStorage").textContent = storageText;
-    $("bagStorage").className = "storage-status " + (
-      storage.cannot_start ? "critical" :
-      storage.low_space_warning ? "warning" : ""
-    );
-
     const noTopics = selectedTopics.size === 0 || topicLoadError;
     $("bagStart").disabled = recording || state === "STARTING" || state === "STOPPING" ||
       Boolean(storage.cannot_start) || noTopics || !$("bagDomain").value;
@@ -438,9 +419,6 @@ async function refreshBagStatus() {
   } catch (error) {
     $("bagStatus").textContent = "● ERROR";
     $("bagStatus").className = "bag-status error";
-    $("bagPath").textContent = error.message;
-    $("bagStorage").textContent = "保存先容量を取得できません。";
-    $("bagStorage").className = "storage-status critical";
     $("bagStart").disabled = true;
     $("bagStop").disabled = true;
   }
@@ -456,18 +434,9 @@ function updateGlobalBagInfo() {
   const detail = document.createElement("p");
   const info = currentBag && currentBag.recording_info;
   detail.textContent = info
-    ? "Domain ID " + info.domain_id + " · " + (info.topics?.length || 0) + " topics · " + (info.output_path || "")
+    ? "Domain ID " + info.domain_id + " · " + (info.topics?.length || 0) + " topics"
     : "現在、親PCで記録中のrosbagはありません。";
   root.append(title, detail);
-  const storage = currentBag && currentBag.storage;
-  if (storage) {
-    const capacity = document.createElement("p");
-    capacity.textContent = "空き容量：" + Number(storage.free_gb || 0).toFixed(2) + " GB" +
-      (storage.low_space_warning ? "（警告）" : "");
-    capacity.className = storage.cannot_start ? "storage-status critical" :
-      storage.low_space_warning ? "storage-status warning" : "storage-status";
-    root.append(capacity);
-  }
   const hint = document.createElement("p");
   hint.className = "help-text";
   hint.textContent = "ROSbagの開始・停止とトピック選択は、PC操作画面のROSbag管理パネルから行えます。";
