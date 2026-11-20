@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE="pc-manager-agent.service"
+LEGACY_SERVICE="pc-manager-server.service"
 UNIT_PATH="/etc/systemd/system/$SERVICE"
 MARKER="# Managed by ROS PC Manager setup scripts. Do not edit manually."
 
@@ -77,6 +78,17 @@ fi
 
 # Enable boot autostart only after the service is confirmed active.
 sudo systemctl enable "$SERVICE"
+
+# The new Agent-based topology no longer requires the central Manager Server.
+# Disable the legacy unit only after the Agent is confirmed active.
+legacy_unit="$(systemctl list-unit-files --type=service --no-legend "$LEGACY_SERVICE" | awk 'NR == 1 { print $1 }')"
+if [[ "$legacy_unit" == "$LEGACY_SERVICE" ]]; then
+  echo "旧Manager Serverを停止し、自動起動を解除します。"
+  if ! sudo systemctl disable --now "$LEGACY_SERVICE"; then
+    fail "旧Manager Serverの停止に失敗しました。sudo systemctl disable --now $LEGACY_SERVICE を確認してください。"
+  fi
+  echo "旧Manager Serverを無効化しました。"
+fi
 
 echo
 echo "Agentサービスの設定が完了しました。"

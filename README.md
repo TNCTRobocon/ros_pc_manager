@@ -1,166 +1,228 @@
 # ROS PC Manager
 
-同一LAN内の複数Ubuntu PCをスマートフォンのブラウザから管理するWebアプリです。
-親PCで管理サーバとROSbag記録を実行し、管理対象PCには小さなAgentを配置します。
+スマートフォンのブラウザから、同一LAN内にある複数のROS 2 PCを直接管理するWebアプリです。
 
-## 主な機能
-
-- IPアドレスを手動登録し、Agentのオンライン状態を表示（ONLINE / SHUTTING_DOWN / OFFLINE / UNKNOWN）
-- シャットダウン要求後はSHUTTING_DOWN、Agentとの通信断後はOFFLINE、OS再起動後はONLINEへ自動遷移
-- PC登録・編集・削除をWeb画面から実行
-- 登録情報をSQLiteに保存し、config/hosts.yamlへ自動出力（認証トークンは出力しない）
-- YAMLに登録したlaunchの起動・停止
-- launchの実行状態マーク（●実行中 / ○停止中 / ◐起動中 / ◌停止中）
-- 管理Agentが起動したlaunchのみ一覧表示・一括停止
-- 端末から直接起動したlaunchは一覧・一括停止に含めない
-- 実行中launchをすべて選択して一括停止
-- 親PCでDomain ID単位にrosbag2を記録
-- Domain IDごとにtopic discoveryし、複数topicを選択して記録
-- CPU・メモリ・ディスク・ROS 2ノード一覧などの詳細表示
-- 確認後のPCシャットダウン要求
+**中央管理サーバー・親PC・中央データベースは必要ありません。** 各PCでAgentを起動し、スマートフォンのブラウザにAgent一覧とTokenを保存します。Agentはそれぞれ自分のPCだけを管理します。
 
 ## アーキテクチャ
 
-- backend/pc_manager_server: FastAPIサーバ、PC登録DB、Agent通信、親PCのrosbag2管理
-- agent/pc_manager_agent: PC側Agent。管理対象launchの起動・停止とPC状態取得
-- frontend: スマホ向けレスポンシブWeb UI
-- config: 親PCのROS環境・Domain IDなどの設定例
-- deploy: systemd / sudoersのテンプレート
-- tests: 自動テスト
+```text
+スマートフォン / PWA
+  ├─ Agent Aへ直接接続
+  ├─ Agent Bへ直接接続
+  ├─ Agent Cへ直接接続
+  └─ Agent一覧・Token・表示設定をIndexedDBに保存
 
-Agentが起動したlaunchはPID・プロセスグループ・起動時刻を記録します。Agent再起動後もPIDと/procの開始時刻を照合して状態を復元します。外部起動プロセスを名前検索して停止することはありません。systemdテンプレートでは`KillMode=process`を指定し、Agentサービス再起動時に管理launchまで終了しないようにします。このためAgentサービスを停止しただけではlaunchは停止せず、Agent再起動後に再び管理できます。PCのシャットダウン時はOSの終了処理に従って各プロセスも終了します。
+Agent A ── mDNS ── Agent B
+   │                  │
+   └────── Agent C ───┘
+```
 
-## 親PCでのセットアップ
+- `agent/pc_manager_agent`: 各PCで動作するAgent API、ROS 2監視、Launch管理、ROSbag管理、mDNS発見。
+- `frontend`: スマートフォン用Web GUIとPWAの静的ファイル。
+- `scripts`: Agent設定作成、Token確認、systemd自動起動。
+- `deploy/systemd`: Agentのsystemdユニット例。
+- `tests`: 自動テスト。
 
-Ubuntu 24.04 / Python 3.12 / ROS 2 Jazzyを想定しています。
+スマートフォンは選択したAgentに直接API要求を送り、別のPCを経由しません。Agent同士はmDNSで存在情報だけを交換します。Agent間でTokenやROS 2操作権限を共有することはありません。
 
-一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
+## 主な機能
 
-~~~bash
-cd /home/miquiteru/ros_pc_manager
+- 複数PCのONLINE / OFFLINE / SHUTTING_DOWN / ERROR表示
+- AgentのmDNS自動発見とIPアドレス手動登録
+- AgentごとのBearer Token認証
+- PC情報・Agent Tokenのスマートフォン側保存
+- ROS 2ノード・システム情報の表示
+- Agentが管理するLaunchの起動・停止・状態表示
+- Launch設定の追加・編集・削除・検証
+- 選択したAgent上でのROSbag記録・停止
+- Domain ID単位のTopic Discoveryと複数Topic選択
+- PCのシャットダウン
+- PWAのホーム画面追加・静的画面のオフラインキャッシュ
+
+LaunchManagerはAgentが起動したプロセスだけを管理します。PIDと`/proc`のプロセス開始時刻を照合し、無関係なプロセスを名前検索で停止することはありません。Agentサービスを再起動しても、管理対象Launchの状態を復元します。
+
+## ブラウザと接続方式
+
+### 推奨：Chrome / Edge + GitHub Pages版PWA
+
+PWAは静的ファイルだけで構成され、GitHub PagesからHTTPS配信します。PWA配信元はPC一覧・ROS 2データ・Tokenを保存しません。
+
+HTTPSのWebページからLAN内HTTP Agentへ接続するには、対応ブラウザのLocal Network Access許可が必要です。初回登録時にAgentへ接続するとブラウザから許可を求められる場合があります。許可を拒否した場合は、ブラウザ設定でこのサイトのローカルネットワークアクセスを確認してください。
+
+GitHub PagesのPWA URL：
+
+```text
+https://tnctrobocon.github.io/ros_pc_manager/
+```
+
+GitHubリポジトリで一度だけ、Settings → Pages → Build and deployment → Sourceを「GitHub Actions」に設定してください。以後、`main`ブランチにPWA関連ファイルをpushすると、Actionsが静的サイトをデプロイします。
+
+### 互換経路：Agentが配信するWeb GUI
+
+Safariなど、HTTPSページからLAN内HTTP Agentへの接続が制限されるブラウザでは、対象LAN内の任意のAgentのWeb GUIを直接開きます。この互換経路はAgentごとにブラウザの保存領域（Origin）が異なります。複数PCの一覧を共通化するには、GitHub Pages版PWAを使用してください。
+
+```text
+http://<AgentのIPアドレス>:8765/
+```
+
+各Agentが同じWeb GUIを配信するため、特定のPCを常時起動しておく必要はありません。このHTTP画面はPWAインストールやService Workerによるオフライン起動の対象ではありません。
+
+## 1. 各PCへのインストール
+
+Ubuntu 24.04 / Python 3.12 / ROS 2 Jazzyを想定しています。**管理したい各PCで**同じリポジトリを配置し、次を実行してください。
+
+```bash
+cd /home/<user>/ros_pc_manager
 ./scripts/setup.sh
-~~~
+```
 
-config/server.yamlを確認します。初期値ではROS 2 Jazzyをsourceし、rosbagをvar/rosbagsへ保存します。親PCで独自メッセージ型を記録する場合は、ros.overlaysに必要なWorkspaceを追加してください。
+Python依存関係をインストールします。mDNS用の`zeroconf`もこのときに導入します。
 
-Manager Serverをsystemdに登録し、OS起動時の自動起動を有効にします。
+## 2. Agent設定と自動起動
 
-一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
+systemd登録・OS起動時の自動起動・Agent起動をまとめて行います。
 
-~~~bash
-./scripts/setup_server_service.sh
-~~~
+```bash
+./scripts/setup_agent_service.sh
+```
 
-このスクリプトは、存在しない場合だけconfig/server.yamlとconfig/domains.yamlをサンプルから作成し、ROS 2環境を検証してからサービス登録・自動起動ON・即時起動を行います。既存設定は上書きしません。通常ユーザーで実行してください（sudoはスクリプト内で要求されます）。
+初回実行では、次の設定を作成・確認します。
 
-初回起動時に8文字の管理パスワードが生成され、var/admin_password.txtに保存されます。ファイル権限は0600です。既存の自動生成パスワードが8文字以外の場合は、次回Server起動時に新しい8文字へ更新されます。config/server.yamlのsecurity.admin_passwordまたは環境変数ROS_PC_MANAGER_ADMIN_PASSWORDで明示指定したパスワードは変更しません。パスワードを確認し、スマートフォンから次のURLを開いてログインしてください。
+- `agent/config/agent.yaml`: PC名、Agent ID、Token、ROS 2環境、APIポートなど。
+- `agent/config/launches.yaml`: Launch管理設定。存在しなければ空の`launches: []`を作成。
 
-手動起動を使う場合は、従来どおり `./scripts/run_server.sh` を実行できます。ただし、systemdサービスと手動起動を同時に実行しないでください。
+Agent IDはPCごとに生成され、設定ファイルに保存されます。Agent Tokenが未設定またはサンプル値の場合は、暗号学的乱数で自動生成します。既に有効なTokenが設定されている場合は維持します。Tokenは`agent.yaml`に保存され、ファイル権限は0600です。
 
-~~~text
-http://<親PCのIPアドレス>:8080/
-~~~
+このスクリプトはsystemdへの登録、自動起動ON、Agentの起動まで実行します。通常ユーザーで実行してください（必要な操作ではスクリプト内からsudoを要求します）。
 
-親PCのファイアウォールでは、LAN内からTCP 8080への接続を許可してください。インターネットへポート公開しないでください。
+### 手動起動で試す場合
 
-## 各管理対象PCのセットアップ
+systemdへ登録せず前面起動する場合：
 
-同じリポジトリを対象PCにも配置し、Python依存関係をセットアップします。
+```bash
+./scripts/prepare_agent_config.sh
+./scripts/run_agent.sh
+```
 
-一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
+`run_agent.sh`はAgent設定がなければ作成・検証してから起動します。systemd起動と手動起動を同時に行わないでください。
 
-~~~bash
-./scripts/setup.sh
-~~~
+## 3. QRコード / Agent Tokenの準備
 
-launches.yamlの例：
+Agentのsystemdサービスが起動している状態で、対象PC上で次を実行します。
 
-~~~yaml
+```bash
+cd /home/<user>/ros_pc_manager
+./scripts/show_agent_pairing.sh
+```
+
+LAN IPv4アドレスが複数ある場合は一覧から選ぶか、次のように指定します。
+
+```bash
+./scripts/show_agent_pairing.sh --address 192.168.1.20
+```
+
+ターミナルに5分間だけ有効なQRコードが表示されます。スマートフォンで読み取るとGitHub Pages版PWAが開き、Agentの接続先が登録フォームに入力されます。QRに含まれるのは一度だけ使用できる一時コードであり、長期Agent Tokenは含まれません。登録時にAgentが一時コードを検証し、成功した場合だけスマートフォンへAgent Tokenを渡します。
+
+QRコードを使わず手動登録する場合は、次のコマンドでTokenを確認できます。
+
+```bash
+./scripts/show_agent_token.sh
+```
+
+TokenはAgentへの接続権限を持つ秘密情報です。必要な端末以外に貼り付けたり、共有したりしないでください。既存Agentの有効なTokenは自動的に変更しません。
+
+QR登録を使う前に、GitHubリポジトリの Settings → Pages → Build and deployment → Source を「GitHub Actions」に設定し、PWAを一度デプロイしてください。QRから開くPWAのURLは `https://tnctrobocon.github.io/ros_pc_manager/` です。QR発行コマンドは対象Agentが起動しているときだけ使用できます。Agent再起動や5分経過後はコードが失効するため、再発行してください。
+
+## 4. スマートフォンからPCを登録
+
+1. Chrome / EdgeでGitHub Pages版PWAを開きます。
+2. 初回AgentはQRコードを読み取るか、表示名・LAN IPv4アドレス・Agentポート（既定8765）・Domain ID・Agent Tokenを手入力して登録します。
+3. 登録要求はスマートフォンから対象Agentへ直接送られ、Agent IDとToken認証が一致したAgentだけをIndexedDBに保存します。
+4. 1台以上登録した後は「Agentを検索」を押すと、登録済みAgentがmDNSで発見した未登録Agentを一覧表示します。
+5. 発見されたPCを登録フォームへ移し、QRコードまたはそのPCのAgent Tokenで登録します。
+
+ブラウザはWebページからmDNSマルチキャストを直接受信できないため、**初回の1台だけはQRコードまたはIPアドレスの手動指定が必要です**。登録後は、起動中のどのAgentからでもほかのAgentを発見できます。特定Agentを「親PC」や常時起動PCとして固定しません。
+
+## 5. Launch設定
+
+各PCのAgentが、自分のPCにあるWorkspace・Package・Launchファイルを検証します。GUIまたは`agent/config/launches.yaml`で設定できます。
+
+例：
+
+```yaml
 launches:
-  - id: enemyrobot_bringup
-    display_name: "敵ロボット全体起動"
-    workspace: /home/user/enemyrobot26_ws
-    package: enemyrobot_bringup
+  - id: robot_bringup
+    display_name: "Robot bringup"
+    workspace: /home/user/ros2_ws
+    package: robot_bringup
     launch_file: bringup.launch.py
     ros_domain_id: 32
     arguments: {}
-~~~
+```
 
-- id: PC内で一意の管理ID。英数字・_・.・-のみ
-- display_name: Web画面に表示する任意の名前
-- workspace: ビルド済みWorkspaceの絶対パス
-- package / launch_file: ros2 launchへ渡す値
-- ros_domain_id: そのlaunchを起動するDomain ID
-- arguments: launch引数のキー・値
+- `id`: PC内で一意の管理ID。英数字・`_`・`.`・`-`を使用。
+- `display_name`: GUIに表示する名前。
+- `workspace`: ビルド済みWorkspaceの絶対パス。
+- `package` / `launch_file`: `ros2 launch`へ渡すPackageとLaunchファイル。
+- `ros_domain_id`: Launchを実行するROS_DOMAIN_ID。
+- `arguments`: Launch引数の固定値。
 
-起動前に、指定Workspaceのinstall/setup.bashが存在することを確認してください。launch引数はYAMLで固定し、画面から任意コマンドを送る機能は設けていません。
+指定Workspaceには`install/setup.bash`が必要です。Launch引数は設定時に固定され、GUIから任意のシェルコマンドを実行する機能はありません。
 
-親PCのWeb画面で、PC名・IPアドレス・Agentポート（既定8765）・デフォルトDomain IDを入力してPCを登録します。登録直後にAgent Tokenが表示されます。後から再確認する場合は、対象PCの操作画面で「詳細表示」→「Agent認証」→「Agent Tokenを表示」を選択してください。
+## 6. ROSbag
 
-対象PCで、Agentをsystemdに登録してOS起動時の自動起動を有効にします。
+ROSbagは親PCではなく、**GUIで選択したAgentのPC上**で動作します。
 
-一度実行すれば、それ以降、シャットダウン後も、再実行は不要です。
+- Topic Discoveryは選択したAgent上で、指定Domain IDを使用して実行します。
+- 選択したTopicだけをrosbag2に渡します。
+- 保存先の既定値は`~/.local/state/ros-pc-manager/rosbags/domain_<ID>/YYYY-MM-DD/`です。
+- 設定された空き容量下限を下回る場合、新しい記録を拒否します。
+- 古いbagの自動削除は行いません。
+- カスタムメッセージ型を記録する場合、記録するAgentにもその型を含むROS 2 overlayが必要です。
 
-~~~bash
-./scripts/setup_agent_service.sh
-~~~
+`agent.yaml`の`ros.overlays`にWorkspaceを追加してください。
 
-初回は `agent/config/agent.yaml` と `agent/config/launches.yaml` を作成します。Agent Tokenが未設定の場合は対話入力を求めます。TokenをManagerで発行する前に実行しても、Token未設定のままサービスを有効化することはありません。Tokenは表示せず、agent.yamlを0600で保存します。
+```yaml
+ros:
+  overlays:
+    - /home/user/custom_interfaces_ws
+```
 
-launch設定ファイルが存在しない場合は `launches: []` の空設定を作成します。既存のagent.yaml / launches.yamlをテンプレートで上書きすることはありません（Tokenが未設定・仮値の場合はtoken項目だけ更新します）。登録済みlaunchがある場合は、ROS 2 Workspace・package・launchファイルを検証し、問題があればサービス登録前に停止します。launchが0件でもAgentは起動できます。launch設定はWeb画面のlaunch設定管理、またはYAML編集で追加してください。
+同じDomain IDに複数PCが存在する場合、同名TopicはDomain全体のTopicとして記録されます。発行元PCごとの分離は行いません。
 
-手動起動を使う場合は、先に `./scripts/prepare_agent_config.sh` で設定を作成・検証し、その後 `./scripts/run_agent.sh` を実行します。`prepare_agent_config.sh` はsystemd登録や自動起動設定を行いません。systemdサービスと手動起動を同時に実行しないでください。
-
-親PC自身も管理対象に含める場合は、親PCのWeb画面で親PC自身を登録し、親PC上でも `setup_agent_service.sh` を実行してください。Manager ServerとAgentは別サービスとして動作します。
-
-## [管理パスワード]を表示
-
-親PC上で実行してください。
-
-~~~bash
-cd ~/ros_pc_manager
-cat var/admin_password.txt
-~~~
-
-## ROSbagの動作
-
-- 記録プロセスは親PC上で1つだけ動作します。
-- 同時記録は初期仕様では1 Domain IDです。
-- Domain ID選択後、親PC上でros2 topic list --no-daemonを実行してtopicを取得します。
-- 選択したtopicのみros2 bag record --topics ...へ渡します。
-- 保存先は<rosbag_root>/domain_<ID>/YYYY-MM-DD/recording_YYYYMMDD_HHMMSSです。
-- 記録停止はSIGINTで正常終了を要求し、rosbag2のメタデータ確定を待ちます。
-- ディスク空き容量が設定値を下回る場合、新規記録を拒否します。古いbagの自動削除はしません。
-
-ROSbagでカスタムメッセージを扱う場合、親PCにもそのメッセージ型をビルドしたWorkspaceのoverlayが必要です。同じDomain IDに複数PCがいる場合、同名topicはDomain全体のtopicとして記録され、発行元PCごとの分離はしません。
-
-## シャットダウン権限
-
-Agentは、実行ユーザーがrootでなければ次のコマンドを非対話で実行します。
-
-~~~bash
-sudo -n /usr/bin/systemctl poweroff
-~~~
-
-シャットダウンが「sudo: a password is required」などで失敗する場合、Agentを実行しているLinuxユーザーに、上記のコマンドだけをパスワードなしで実行できる権限を付与します。**シャットダウン対象となる各PCで個別に設定してください。** 親PCの設定だけでは、別PCのシャットダウン権限は付与されません。
-
-### 1. Agentの実行ユーザーを確認
-
-Agentが起動しているPCで実行します。
+## 7. Agentの状態・ログ
 
 ```bash
-ps -eo user,pid,args | grep '[r]os-pc-manager-agent'
+systemctl status pc-manager-agent
+journalctl -u pc-manager-agent -f
 ```
 
-出力例：
+設定変更を反映する場合：
 
-```text
-miquiteru  1234  .../ros-pc-manager-agent --config ...
+```bash
+sudo systemctl restart pc-manager-agent
 ```
 
-この例ではAgent実行ユーザーは `miquiteru` です。systemdで起動している場合も、実際のAgentプロセスのユーザーを確認してください。Agentがrootで実行されている場合、このsudoers設定は不要です（rootでのAgent実行は通常推奨しません）。
+自動起動を解除してAgentを停止する場合：
 
-### 2. sudoersファイルを編集
+```bash
+sudo systemctl disable --now pc-manager-agent
+```
+
+Agent APIはTCP 8765（既定）で待ち受けます。ファイアウォールでは信頼するLAN内だけに許可し、インターネットへポート公開しないでください。
+
+## 8. mDNS / ネットワーク条件
+
+- Agentの自動発見にはmDNS / DNS-SDを使用します。
+- UDP 5353のマルチキャスト通信が同一LAN内で届く必要があります。
+- Wi-Fiのクライアント隔離、VLAN、ルーター、ファイアウォールがマルチキャストを遮断すると自動発見できません。
+- mDNSで発見できない場合は、IPアドレスを手動登録できます。
+- 現在の実装は同一LANを対象にします。異なるVLAN・拠点間の自動発見やVPN越しの発見は対象外です。
+
+## 9. シャットダウン権限
+
+Agentは通常ユーザーで動かし、必要な場合に限り`sudo -n /usr/bin/systemctl poweroff`を呼び出します。root権限全体をAgentに渡さないでください。
 
 対象PCで次を実行します。
 
@@ -168,108 +230,51 @@ miquiteru  1234  .../ros-pc-manager-agent --config ...
 sudo visudo -f /etc/sudoers.d/ros-pc-manager
 ```
 
-次の1行を追加します。左側のユーザー名は、手順1で確認したAgent実行ユーザーに置き換えてください。
+次の1行を追加し、ユーザー名をAgent実行ユーザーに置き換えます。
 
 ```text
-miquiteru ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
+<AGENT_USER> ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
 ```
 
-例えばAgent実行ユーザーが `robo-a` なら、次のようにします。
-
-```text
-robo-a ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
-```
-
-保存して終了します。sudoersファイルを直接エディタで編集せず、必ず `visudo` を使用してください。
-
-### 3. ファイル権限と構文を確認
+権限と構文を確認します。
 
 ```bash
 sudo chmod 0440 /etc/sudoers.d/ros-pc-manager
 sudo visudo -cf /etc/sudoers.d/ros-pc-manager
-```
-
-構文が正しければ、次のように表示されます。
-
-```text
-/etc/sudoers.d/ros-pc-manager: parsed OK
-```
-
-### 4. パスワードなしで実行できるか確認
-
-Agentを実行しているユーザーで、次を実行します。
-
-```bash
 sudo -n -l /usr/bin/systemctl poweroff
 ```
 
-許可されたコマンドとして `/usr/bin/systemctl poweroff` が表示されれば確認完了です。この確認コマンドは権限を照会するだけで、シャットダウンは実行しません。**動作確認のために `systemctl poweroff` 自体を手動実行しないでください。**
+許可するのはシャットダウンコマンドだけです。設定はシャットダウン対象となる各PCで個別に行ってください。
 
-### 5. スマートフォンから再試行
+## 10. 保存データとセキュリティ
 
-sudoers設定はコマンド実行時に参照されるため、通常AgentやManager Serverの再起動は不要です。スマートフォンから対象PCのシャットダウンを再試行してください。
+- Agent一覧、Agent Token、表示情報はスマートフォンのIndexedDBに保存します。
+- Agent側はAgent Tokenを`agent/config/agent.yaml`に保存します。Tokenはファイル権限0600で保護してください。
+- Agent TokenはmDNS広告に含めません。
+- Agentの操作APIはBearer Token認証を必須とし、CORSはPWAの配信元とLAN内HTTP AgentのOriginに限定します。
+- Agentの`/health`だけは、ネットワーク監視のため認証なしで応答します。ノード情報・Launch・ROSbag・シャットダウンAPIにはTokenが必要です。
+- PWAのService WorkerはHTML・CSS・JavaScriptなどの静的ファイルだけをキャッシュします。Agent API・Token・ROS 2状態はキャッシュしません。
+- ブラウザのサイトデータを消去すると、保存したAgent一覧とTokenも消えます。その場合はTokenを再入力して登録してください。
+- 通信はLAN内HTTPです。信頼できる隔離LANで使用し、外部公開しないでください。
 
-それでも失敗する場合は、Agent実行ユーザー、sudoersファイルの内容・権限、`visudo -cf` の結果を確認してください。特に、Agentを起動したユーザーとsudoersに記載したユーザーが一致している必要があります。
+## 旧Manager Serverからの移行
 
-### sudoers設定例
+旧構成のManager Server・SQLite・hosts.yamlは、新しいGUIから利用しません。旧データは自動インポートしません。各Agentをスマートフォンに再登録してください。Agent側のTokenは`show_agent_token.sh`で確認でき、既存の有効なTokenは保持されます。
 
-このリポジトリには `deploy/sudoers/ros-pc-manager.example` も用意しています。ファイル内の `__AGENT_USER__` をAgent実行ユーザーに置き換えてから、管理者が `/etc/sudoers.d/ros-pc-manager` に配置し、必ず `chmod 0440` と `visudo -cf` で検証してください。
+旧Manager Serverサービスを使っていたPCでは、Agentのsystemdサービスを有効化する`./scripts/setup_agent_service.sh`が、Agentの起動を確認した後に旧Serverを停止・自動起動解除します。旧Serverを手動で停止する場合は次を実行します。
 
-許可対象は `/usr/bin/systemctl poweroff` のみに限定します。Agentに任意のrootコマンド実行権限は与えません。
+```bash
+sudo systemctl disable --now pc-manager-server.service
+```
 
-## systemdによる自動起動
-
-通常は次の2つのセットアップスクリプトを使用します。
-
-- 親PC：`./scripts/setup_server_service.sh`
-- 各管理対象PC：`./scripts/setup_agent_service.sh`
-
-どちらも、先に `./scripts/setup.sh` を実行してPython環境を構築してください。セットアップスクリプトは通常ユーザーで実行します。必要なsystemd登録時のみ内部でsudoを使用します。
-
-スクリプトはプロジェクトの配置先・実行ユーザー・グループを使ってsystemdユニットを生成します。生成済みユニットには管理マーカーを付けます。同名の既存ユニットに管理マーカーがない場合は、ユーザー独自設定を上書きしないよう処理を中止します。
-
-設定ファイルが既にある場合は上書きしません。Agent Tokenが未設定・仮値の場合、またはROS 2環境・launch設定の検証に失敗した場合は、自動起動を有効化しません。Agent TokenはManagerのPC登録で発行された値を使用してください。Manager側に登録されたTokenとAgent側のTokenは一致している必要があります。
-
-状態・ログの確認：
-
-~~~bash
-systemctl status pc-manager-server
-systemctl status pc-manager-agent
-journalctl -u pc-manager-server -f
-journalctl -u pc-manager-agent -f
-~~~
-
-自動起動の解除：
-
-~~~bash
-sudo systemctl disable --now pc-manager-server
-sudo systemctl disable --now pc-manager-agent
-~~~
-
-Agentサービスは `KillMode=process` を使用します。Agentサービスの再起動時に管理launchプロセスは終了せず、Agent再起動後にPIDとプロセス開始時刻から管理状態を復元します。
-
-`agent.yaml` の変更を反映する場合は `sudo systemctl restart pc-manager-agent` を実行してください。`server.yaml` の変更を反映する場合は、先にROSbag記録を停止してから `sudo systemctl restart pc-manager-server` を実行してください。Manager Serverの停止・再起動中はROSbag記録を継続できず、記録ファイルの正常確定も保証されません。
-
-## セキュリティとネットワーク
-
-- 管理UIは初回生成の管理パスワードでログインします。セッションはSQLiteにトークンのハッシュを保存し、12時間有効です。親PCや管理サーバを再起動しても、有効期限内なら再ログインは不要です。ログアウトまたは期限切れで無効になります。この永続化機能を含むバージョンへの初回更新時だけは、旧版のメモリ内セッションを移行できないため一度ログインし直してください。
-- 管理対象PCのシャットダウン要求時は、要求時刻とAgentが報告するOS起動時刻をSQLiteに保存します。Agentがまだ応答している間はSHUTTING_DOWN、応答しなくなるとOFFLINE、OS起動時刻の更新を検出するとONLINEに戻ります。シャットダウン要求後180秒経っても同じOS起動状態でAgentが応答する場合は、シャットダウンが完了していないと判断してONLINEに戻します。
-- APIレスポンスはHTTPキャッシュを無効化し、ブラウザの画面復帰・フォーカス復帰時にもPC状態を再取得します。
-- Agent APIはPCごとのBearer tokenを要求します。
-- Agent Tokenは親PCのSQLite DBに保存されます。DBは0600に設定し、認証済みの管理画面から対象PCごとに表示できます。Token表示APIもManagerログインを必須とし、config/hosts.yamlには出力しません。
-- config/hosts.yamlはSQLiteから自動生成する参照用ファイルです。編集元として使用せず、PC登録・編集・削除後とサーバ起動時に再生成します。Agent tokenは含めません。
-- 通信は同一LAN内のHTTPです。信頼できる隔離LANで使用し、ルーターで外部公開しないでください。共有・不特定のLANではTLS/VPNを追加してください。
-- ROS 2 DDSのマルチキャスト通信がLAN内で届く必要があります。Wi-Fiのクライアント隔離、VLAN、ファイアウォールでDiscoveryが遮断されると親PCからtopicを発見できません。
-- シャットダウン確認は行いますが、launchやrosbag記録中でも実行可能です。ROSbag記録中に対象PCを停止すると、そのPCからの記録データは止まります。親PC自体をシャットダウンするとrosbagも終了します。
+旧Server関連コードと設定は、移行期間中のロールバック用にリポジトリ内へ残しています。通常運用では`pc-manager-server`を起動しません。
 
 ## 開発・テスト
 
-~~~bash
+```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
-bash -n scripts/setup_agent_service.sh scripts/setup_server_service.sh
-.venv/bin/python -m compileall -q scripts backend agent tests
+bash -n scripts/setup.sh scripts/run_agent.sh scripts/prepare_agent_config.sh scripts/setup_agent_service.sh scripts/show_agent_token.sh scripts/show_agent_pairing.sh
+.venv/bin/python -m compileall -q scripts agent tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests -q
 node --check frontend/app.js
-~~~
-
-実機操作前に、Agentが稼働しているか、親PCからAgentのIP・ポートへ到達できるか、Domain IDのDDS Discoveryが成立するかを確認してください。
+```

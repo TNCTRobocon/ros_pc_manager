@@ -1,35 +1,78 @@
 # API overview
 
-All /api/* endpoints except /api/login and /api/health require X-Manager-Session.
+The browser calls each registered Agent directly. There is no Manager login,
+central host registry, session token, or API proxy in the current frontend.
 
-## Manager
+All Agent control APIs require:
 
-- POST /api/login: password -> session token.
-- GET /api/session: validate the current session.
-- GET /api/hosts: registered PCs and online/offline probe results.
-- POST /api/hosts: manual PC registration; returns the generated Agent token once.
-- PUT /api/hosts/{id}: update display name, IP address, Agent port, and default Domain ID without rotating the Agent token.
-- DELETE /api/hosts/{id}: remove a registration.
-- PC create/update/delete operations regenerate config/hosts.yaml atomically from SQLite. The YAML contains public inventory fields only and never contains Agent tokens; SQLite remains authoritative.
-- GET /api/hosts/{id}/status: system status and node names from Agent.
-- GET /api/hosts/{id}/launches: registered launch state.
-- POST /api/hosts/{id}/launches/start: start an allowlisted launch ID.
-- POST /api/hosts/{id}/launches/stop: stop selected launch IDs or __running__.
-- POST /api/hosts/{id}/shutdown: request OS shutdown.
-- GET /api/domains: merged Domain ID choices.
-- GET /api/rosbag/topics?domain_id=N: topic discovery on manager.
-- GET /api/rosbag/status: recording state.
-- POST /api/rosbag/start: start selected topics on one Domain ID.
-- POST /api/rosbag/stop: stop and finalize the recording.
+```http
+Authorization: Bearer <agent-token>
+```
 
-## Agent
+Only `GET /health` and the static web files are public. Discovery metadata
+never contains the Agent token.
 
-Agent endpoints require Authorization: Bearer <token>.
+## Agent public endpoints
 
-- GET /health
-- GET /api/status
-- GET /api/launches
-- POST /api/launches/{launch_id}/start
-- POST /api/launches/{launch_id}/stop
-- POST /api/launches/stop-running
-- POST /api/shutdown
+- `GET /`: responsive web GUI served by the Agent.
+- `GET /health`: liveness and non-secret Agent identity.
+- `GET /static/{path}`: frontend assets.
+- `GET /manifest.webmanifest`
+- `GET /service-worker.js`
+- `GET /icon.svg`
+
+## Agent authenticated endpoints
+
+### Status and peer discovery
+
+- `GET /api/status`: PC information, ROS 2 node names, and managed Launch states.
+- `GET /api/peers`: this Agent identity and mDNS-discovered peers (ID, name,
+  private IPv4 addresses, port, protocol). No credentials are shared.
+
+### Launch management
+
+- `GET /api/launches`
+- `GET /api/launch-config`
+- `PUT /api/launch-config`
+- `POST /api/launch-config/validate`
+- `GET /api/workspaces/packages?workspace=...`
+- `GET /api/workspaces/launch-files?workspace=...&package=...`
+- `POST /api/launches/{launch_id}/start`
+- `POST /api/launches/{launch_id}/stop`
+- `POST /api/launches/stop-running`
+
+Only Launches registered in this Agent's `launches.yaml` are controlled.
+
+### ROSbag
+
+- `GET /api/rosbag/status`
+- `GET /api/rosbag/topics?domain_id=N`
+- `POST /api/rosbag/start`: JSON body with `domain_id` and `topics`.
+- `POST /api/rosbag/stop`
+
+Discovery and recording are performed on the Agent's own PC.
+
+### System control
+
+- `POST /api/shutdown`: request shutdown of this Agent's PC.
+
+## QR pairing
+
+- `POST /api/pairing/create`: authenticated; creates a cryptographically
+  random one-time pairing code with a 300-second expiry. Only its SHA-256 hash
+  is kept in Agent memory.
+- `POST /api/pairing/complete`: public, one-time completion endpoint. A
+  matching unexpired code is consumed before the Agent Token is returned.
+  Reuse and expired codes are rejected with HTTP 401.
+
+The QR contains the PWA URL, Agent address/port/identity/default Domain ID,
+and the temporary one-time code. It never contains the long-lived Agent Token.
+The CLI obtains a temporary code through the authenticated create endpoint.
+
+## Discovery
+
+Agents advertise `_ros-pc-manager._tcp.local.` over mDNS/DNS-SD.
+A normal browser page cannot subscribe directly to mDNS multicast. Therefore,
+the first Agent is registered manually or by QR code. Once one or more Agents
+are registered, the GUI queries their authenticated `/api/peers` endpoint
+and offers discovered Agents for QR or manual Token pairing.

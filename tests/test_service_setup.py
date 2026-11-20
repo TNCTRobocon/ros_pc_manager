@@ -49,6 +49,8 @@ def test_ensure_agent_files_creates_empty_launch_config_and_secure_token(tmp_pat
     raw_agent = yaml.safe_load(agent_config.read_text(encoding="utf-8"))
     raw_launches = yaml.safe_load(launches_config.read_text(encoding="utf-8"))
     assert raw_agent["agent"]["token"] == "manager-generated-token-0123456789"
+    assert len(raw_agent["agent"]["id"]) == 36
+    assert raw_agent["discovery"]["enabled"] is True
     assert raw_launches == {"launches": []}
     assert agent_config.stat().st_mode & 0o777 == 0o600
     assert launches_config.stat().st_mode & 0o777 == 0o600
@@ -78,12 +80,18 @@ def test_ensure_agent_files_preserves_existing_config_and_launches(tmp_path: Pat
         encoding="utf-8",
     )
     launches_path.write_text("launches: []\n", encoding="utf-8")
-    before_agent = agent_path.read_bytes()
+    before_agent = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
     before_launches = launches_path.read_bytes()
 
     ensure_agent_files(tmp_path, token_provider=lambda: pytest.fail("token must not be requested"))
 
-    assert agent_path.read_bytes() == before_agent
+    after_agent = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
+    assert after_agent["agent"]["name"] == before_agent["agent"]["name"]
+    assert after_agent["agent"]["token"] == before_agent["agent"]["token"]
+    assert after_agent["agent"]["default_domain_id"] == before_agent["agent"]["default_domain_id"]
+    assert after_agent["paths"] == before_agent["paths"]
+    assert len(after_agent["agent"]["id"]) == 36
+    assert after_agent["discovery"]["enabled"] is True
     assert launches_path.read_bytes() == before_launches
     assert agent_path.stat().st_mode & 0o777 == 0o600
 

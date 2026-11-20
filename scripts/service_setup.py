@@ -12,6 +12,8 @@ import re
 import shutil
 import socket
 import subprocess
+import secrets
+import uuid
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -65,17 +67,18 @@ def valid_agent_token(value: Any) -> bool:
     return token == token.strip() and bool(TOKEN_PATTERN.fullmatch(token)) and token.lower() not in {
         "replace_with_manager_token",
         "replace_with_agent_token",
+        "replace_with_auto_generated_token",
     }
 
 
 def prompt_agent_token() -> str:
     if not sys.stdin.isatty():
         raise SetupError(
-            "Agent Tokenが設定されていません。親PCのWeb画面でこのPCを登録し、"
-            "表示されたAgent Tokenを ROS_PC_MANAGER_AGENT_TOKEN に設定するか、"
-            "対話端末から再実行してください。"
+            "Agent Tokenが設定されていません。通常はsetup_agent_service.shが"
+            "ランダムTokenを自動生成します。既存Agentに合わせる場合だけ"
+            "ROS_PC_MANAGER_AGENT_TOKENを設定してください。"
         )
-    first = getpass.getpass("親PCで発行したAgent Tokenを入力してください: ").strip()
+    first = getpass.getpass("Agent Tokenを入力してください: ").strip()
     second = getpass.getpass("Agent Tokenをもう一度入力してください: ").strip()
     if first != second:
         raise SetupError("Agent Tokenが一致しません。")
@@ -116,19 +119,57 @@ def ensure_agent_files(
         atomic_write_yaml(launches_path, {"launches": []})
         print(f"空のlaunch設定を作成しました: {launches_path}")
 
-    existing_token = str(agent.get("token", "")).strip()
-    if not valid_agent_token(existing_token):
+    changed = False
+    agent_id = str(agent.get("id", "")).strip()
+    if not agent_id:
+        agent["id"] = str(uuid.uuid4())
+        changed = True
+        print("Agent IDを生成しました。")
+    else:
+        try:
+            uuid.UUID(agent_id)
+        except ValueError as exc:
+            raise SetupError("agent.idはUUIDである必要があります。") from exc
+
+    existing_token_raw = str(agent.get("token", ""))
+    existing_token = existing_token_raw.strip()
+    placeholders = {
+        "",
+        "replace_with_manager_token",
+        "replace_with_agent_token",
+        "replace_with_auto_generated_token",
+    }
+    if existing_token.lower() in placeholders:
         env_token = os.environ.get("ROS_PC_MANAGER_AGENT_TOKEN", "").strip()
-        token = env_token if env_token else (token_provider or prompt_agent_token)()
+        if env_token:
+            token = env_token
+        elif token_provider is not None:
+            token = token_provider()
+        else:
+            token = secrets.token_urlsafe(32)
         if not valid_agent_token(token):
             raise SetupError(
-                "Agent Tokenが不正です。Managerで発行した24文字以上のURL-safe Tokenを指定してください。"
+                "Agent Tokenが不正です。24文字以上のURL-safe Tokenを指定してください。"
             )
         agent["token"] = token
-        atomic_write_yaml(config_path, raw)
-        print("Agent Tokenをagent.yamlに保存しました（値は表示しません）。")
+        changed = True
+        print("Agent Tokenを自動生成しました。値は表示していません。")
+    elif not valid_agent_token(existing_token_raw):
+        raise SetupError(
+            "既存のAgent Tokenが不正です。Agent側のTokenを確認し、正しい値を設定してください。"
+        )
     else:
         print("既存のAgent Tokenを保持します。")
+
+    discovery_missing = "discovery" not in raw
+    discovery = raw.setdefault("discovery", {})
+    if not isinstance(discovery, dict):
+        raise SetupError("discoveryはYAMLマッピングである必要があります。")
+    if "enabled" not in discovery:
+        discovery["enabled"] = True
+        changed = True
+    if changed or discovery_missing:
+        atomic_write_yaml(config_path, raw)
 
     config_path.chmod(0o600)
     if launches_path.exists():

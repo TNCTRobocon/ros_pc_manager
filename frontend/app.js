@@ -11,32 +11,451 @@ let selectedTopics = new Set();
 let currentBag = null;
 let currentDomains = [];
 let topicLoadError = "";
+let discoveredPeers = [];
+let pendingPairingCode = "";
+let liveRefreshInProgress = false;
+
+const REGISTRY_DB = "ros-pc-manager";
+const REGISTRY_STORE = "agents";
+let registryDbPromise = null;
+
+function registryDb() {
+  if (registryDbPromise) return registryDbPromise;
+  registryDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(REGISTRY_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(REGISTRY_STORE)) {
+        db.createObjectStore(REGISTRY_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Agent情報の保存領域を開けません。"));
+  });
+  return registryDbPromise;
+}
+
+async function registryGetAll() {
+  const db = await registryDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(REGISTRY_STORE, "readonly")
+      .objectStore(REGISTRY_STORE).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function registryPut(agent) {
+  const db = await registryDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(REGISTRY_STORE, "readwrite")
+      .objectStore(REGISTRY_STORE).put(agent);
+    request.onsuccess = () => resolve(agent);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function registryDelete(agentId) {
+  const db = await registryDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(REGISTRY_STORE, "readwrite")
+      .objectStore(REGISTRY_STORE).delete(agentId);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function agentBaseUrl(agent) {
+  const address = String(agent.address || "").trim();
+  const host = address.includes(":") && !address.startsWith("[") ? "[" + address + "]" : address;
+  return (agent.scheme || "http") + "://" + host + ":" + Number(agent.port || 8765);
+}
+
+function isLocalAgentAddress(address) {
+  const value = String(address || "").trim().toLowerCase();
+  if (/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.local$/.test(value)) {
+    return true;
+  }
+  const octets = value.split(".");
+  if (octets.length !== 4 || octets.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) {
+    return false;
+  }
+  const [a, b] = octets.map(Number);
+  return a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
+
+function applyPairingFromHash() {
+  const match = location.hash.match(/^#pair=([A-Za-z0-9_-]+)$/);
+  if (!match) return false;
+  try {
+    let encoded = match[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (encoded.length % 4) encoded += "=";
+    const binary = atob(encoded);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const payload = JSON.parse(new TextDecoder().decode(bytes));
+    const valid = payload.type === "ros-pc-manager-agent-pair" &&
+      payload.version === 1 &&
+      typeof payload.code === "string" && payload.code.length >= 32 &&
+      typeof payload.agent_id === "string" &&
+      typeof payload.address === "string" && isLocalAgentAddress(payload.address) &&
+      Number.isInteger(Number(payload.port)) && Number(payload.port) >= 1 &&
+      Number(payload.port) <= 65535 &&
+      Number.isInteger(Number(payload.domain_id)) &&
+      Number(payload.domain_id) >= 0 && Number(payload.domain_id) <= 232;
+    if (!valid) throw new Error("QRペアリング情報の形式が正しくありません。");
+
+    const form = $("registerForm");
+    pendingPairingCode = payload.code;
+    editingHostId = null;
+    form.elements.namedItem("name").value = String(payload.name || payload.agent_id);
+    form.elements.namedItem("address").value = payload.address;
+    form.elements.namedItem("port").value = Number(payload.port);
+    form.elements.namedItem("domain_id").value = Number(payload.domain_id);
+    form.elements.namedItem("token").value = "";
+    form.elements.namedItem("token").required = false;
+    form.elements.namedItem("token").placeholder = "QRペアリングコードで認証します";
+    $("hostFormTitle").textContent = "QRコードからPCを登録";
+    $("hostSubmitButton").textContent = "ペアリングして登録";
+    $("cancelHostEdit").classList.add("hidden");
+    $("registrationResult").classList.add("hidden");
+    $("registerPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+
+    // The one-time code must not be sent to the web server in the URL.
+    history.replaceState(null, "", location.pathname + location.search);
+    showToast("QRペアリング情報を読み込みました。5分以内に登録してください。", 6000);
+    return true;
+  } catch (error) {
+    pendingPairingCode = "";
+    history.replaceState(null, "", location.pathname + location.search);
+    showToast("QRペアリングを読み込めません: " + error.message, 6000);
+    return false;
+  }
+}
+
+function isShutdownPending(agent) {
+  const requestedAt = Number(agent?.shutdown_requested_at || 0);
+  return requestedAt > 0 && (Date.now() / 1000 - requestedAt) < 180;
+}
+
+function makeApiError(message, status = 0) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function agentRequest(agent, apiPath, options = {}) {
+  if (!agent || !agent.address || !agent.token) {
+    throw makeApiError("Agentの接続先またはTokenが登録されていません。", 401);
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5000);
+  const headers = {
+    Authorization: "Bearer " + agent.token,
+    ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
+    ...(options.headers || {}),
+  };
+  const requestOptions = {
+    ...options,
+    headers,
+    cache: "no-store",
+    credentials: "omit",
+    mode: "cors",
+    signal: controller.signal,
+  };
+  // Chromium Local Network Access: initiate requests only after a user gesture
+  // has paired an Agent and use the private-address-space hint for HTTP Agents.
+  if (location.protocol === "https:" && isLocalAgentAddress(agent.address)) {
+    requestOptions.targetAddressSpace = "local";
+  }
+  try {
+    const response = await fetch(agentBaseUrl(agent) + apiPath, requestOptions);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = body.detail || body.message || response.statusText || "Agent API request failed";
+      throw makeApiError(typeof message === "string" ? message : JSON.stringify(message), response.status);
+    }
+    return body;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw makeApiError("Agentへの接続がタイムアウトしました。", 503);
+    }
+    if (error instanceof TypeError) {
+      throw makeApiError(
+        "Agentに接続できません。IPアドレス、ポート、ブラウザのローカルネットワーク許可、CORS設定を確認してください。",
+        503,
+      );
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function completeAgentPairing(agent, code) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5000);
+  const requestOptions = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+    cache: "no-store",
+    credentials: "omit",
+    mode: "cors",
+    signal: controller.signal,
+  };
+  if (location.protocol === "https:" && isLocalAgentAddress(agent.address)) {
+    requestOptions.targetAddressSpace = "local";
+  }
+  try {
+    const response = await fetch(agentBaseUrl(agent) + "/api/pairing/complete", requestOptions);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw makeApiError(body.detail || response.statusText || "QRペアリングコードが無効です。", response.status);
+    }
+    return body;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw makeApiError("QRペアリングの応答がタイムアウトしました。", 503);
+    }
+    if (error instanceof TypeError) {
+      throw makeApiError(
+        "Agentに接続できません。LAN接続とブラウザのローカルネットワーク許可を確認してください。",
+        503,
+      );
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function hostStatusFromResponse(agent, status) {
+  const system = status.system || {};
+  let hostStatus = "ONLINE";
+  if (agent.shutdown_requested_at) {
+    const oldBoot = Number(agent.shutdown_boot_time || 0);
+    const currentBoot = Number(system.boot_time || 0);
+    const rebooted = oldBoot > 0 && currentBoot > oldBoot + 1;
+    const expired = Date.now() / 1000 - Number(agent.shutdown_requested_at) >= 180;
+    if (rebooted || expired) {
+      delete agent.shutdown_requested_at;
+      delete agent.shutdown_boot_time;
+    } else {
+      hostStatus = "SHUTTING_DOWN";
+    }
+  }
+  agent.status = hostStatus;
+  agent.system = system;
+  agent.last_seen_at = Date.now();
+  agent.last_error = "";
+  return hostStatus;
+}
 
 async function api(path, options = {}) {
-  const sessionToken = sessionStorage.getItem("managerSession") || "";
-  const response = await fetch(path, {
-    ...options,
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      ...(sessionToken ? { "X-Manager-Session": sessionToken } : {}),
-      ...(options.headers || {}),
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  if (response.status === 401 && path !== "/api/login") {
-    sessionStorage.removeItem("managerSession");
-    showLoginPage();
+  const method = String(options.method || "GET").toUpperCase();
+  const [pathname, query = ""] = path.split("?", 2);
+  const body = options.body ? JSON.parse(options.body) : {};
+  const hostMatch = pathname.match(/^\/api\/hosts\/([^/]+)(\/.*)?$/);
+
+  if (pathname === "/api/hosts" && method === "GET") {
+    const saved = await registryGetAll();
+    const refreshed = await Promise.all(saved.map(async (agent) => {
+      try {
+        const status = await agentRequest(agent, "/api/status");
+        if (status.agent_id !== agent.id) {
+          throw makeApiError("接続先が登録時のAgent IDと一致しません。", 409);
+        }
+        hostStatusFromResponse(agent, status);
+        agent.launches = status.launches || {};
+      } catch (error) {
+        agent.status = [401, 409].includes(error.status) ? "ERROR" :
+          isShutdownPending(agent) ? "SHUTTING_DOWN" : "OFFLINE";
+        agent.last_error = error.message;
+      }
+      await registryPut(agent);
+      return agent;
+    }));
+    return refreshed.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   }
-  if (!response.ok) {
-    const message = body.detail || body.message || response.statusText || "API request failed";
-    const error = new Error(
-      typeof message === "string" ? message : JSON.stringify(message)
-    );
-    error.status = response.status;
-    throw error;
+
+  if (pathname === "/api/hosts" && method === "POST") {
+    const candidate = {
+      name: String(body.name || "").trim(),
+      address: String(body.address || "").trim(),
+      port: Number(body.port || 8765),
+      domain_id: Number(body.domain_id || 0),
+      token: String(body.token || "").trim(),
+      scheme: "http",
+    };
+    const pairingCode = String(body.pairing_code || "").trim();
+    let pairingResult = null;
+    if (pairingCode) {
+      if (candidate.token) {
+        throw makeApiError("Token入力とQRペアリングは同時に使用できません。", 422);
+      }
+      pairingResult = await completeAgentPairing(candidate, pairingCode);
+      candidate.token = String(pairingResult.token || "");
+    }
+    if (!candidate.name || !candidate.address || !Number.isInteger(candidate.port) ||
+        candidate.port < 1 || candidate.port > 65535 ||
+        !Number.isInteger(candidate.domain_id) || candidate.domain_id < 0 ||
+        candidate.domain_id > 232 || candidate.token.length < 24 ||
+        !isLocalAgentAddress(candidate.address)) {
+      throw makeApiError("PC名・LAN内IPまたは.localホスト名・ポート・Domain ID・Agent TokenまたはQRペアリングを確認してください。", 422);
+    }
+    const status = await agentRequest(candidate, "/api/status");
+    const agentId = status.agent_id;
+    if (!agentId) throw makeApiError("Agent IDを取得できません。Agentを更新してください。", 422);
+    if (pairingResult && pairingResult.agent_id !== agentId) {
+      throw makeApiError("QRペアリングで認証したAgent IDと接続先が一致しません。", 409);
+    }
+    const duplicate = (await registryGetAll()).find((item) => item.id === agentId);
+    if (duplicate) throw makeApiError("このAgentは既に登録されています。", 409);
+    candidate.id = agentId;
+    candidate.name = candidate.name || status.name || agentId;
+    hostStatusFromResponse(candidate, status);
+    candidate.agent_version = status.agent_version || "unknown";
+    await registryPut(candidate);
+    return candidate;
   }
-  return body;
+
+  if (hostMatch) {
+    const agentId = decodeURIComponent(hostMatch[1]);
+    const suffix = hostMatch[2] || "";
+    let agent = hosts.find((item) => item.id === agentId) || null;
+    if (!agent) agent = (await registryGetAll()).find((item) => item.id === agentId) || null;
+    if (!agent) throw makeApiError("登録済みAgentが見つかりません。", 404);
+
+    if (!suffix && method === "DELETE") {
+      await registryDelete(agentId);
+      return { ok: true };
+    }
+    if (!suffix && method === "PUT") {
+      const next = {
+        ...agent,
+        name: String(body.name || "").trim(),
+        address: String(body.address || "").trim(),
+        port: Number(body.port || agent.port),
+        domain_id: Number(body.domain_id ?? agent.domain_id),
+      };
+      if (!next.name || !next.address || !Number.isInteger(next.port) ||
+          next.port < 1 || next.port > 65535 ||
+          !Number.isInteger(next.domain_id) || next.domain_id < 0 ||
+          next.domain_id > 232 || next.token.length < 24 ||
+          !isLocalAgentAddress(next.address)) {
+        throw makeApiError("PC情報を確認してください。", 422);
+      }
+      const status = await agentRequest(next, "/api/status");
+      if (status.agent_id !== agentId) {
+        throw makeApiError("指定した接続先は登録済みAgentと異なるIDを返しました。", 409);
+      }
+      hostStatusFromResponse(next, status);
+      await registryPut(next);
+      return next;
+    }
+    if (suffix === "/token" && method === "GET") {
+      return { agent_token: agent.token };
+    }
+    if (suffix === "/status" && method === "GET") {
+      try {
+        const status = await agentRequest(agent, "/api/status");
+        if (status.agent_id !== agentId) {
+          throw makeApiError("接続先が登録時のAgent IDと一致しません。", 409);
+        }
+        const hostStatus = hostStatusFromResponse(agent, status);
+        await registryPut(agent);
+        return { ...status, host_status: hostStatus };
+      } catch (error) {
+        agent.status = [401, 409].includes(error.status) ? "ERROR" :
+          isShutdownPending(agent) ? "SHUTTING_DOWN" : "OFFLINE";
+        agent.last_error = error.message;
+        await registryPut(agent);
+        throw error;
+      }
+    }
+    if (suffix === "/launches" && method === "GET") {
+      const result = await agentRequest(agent, "/api/launches");
+      return Array.isArray(result) ? { launches: result } : result;
+    }
+    if (suffix === "/launch-config" && method === "GET") {
+      return agentRequest(agent, "/api/launch-config");
+    }
+    if (suffix === "/launch-config" && method === "PUT") {
+      return agentRequest(agent, "/api/launch-config", { method: "PUT", body: JSON.stringify(body) });
+    }
+    if (suffix === "/launch-config/validate" && method === "POST") {
+      return agentRequest(agent, "/api/launch-config/validate", { method: "POST", body: JSON.stringify(body) });
+    }
+    if (suffix.startsWith("/workspaces/packages") && method === "GET") {
+      return agentRequest(agent, "/api" + suffix + (query ? "?" + query : ""));
+    }
+    if (suffix.startsWith("/workspaces/launch-files") && method === "GET") {
+      return agentRequest(agent, "/api" + suffix + (query ? "?" + query : ""));
+    }
+    if (suffix === "/launches/start" && method === "POST") {
+      return agentRequest(agent, "/api/launches/" + encodeURIComponent(body.launch_id) + "/start", {
+        method: "POST", body: "{}",
+      });
+    }
+    if (suffix === "/launches/stop" && method === "POST") {
+      if ((body.launch_ids || []).includes("__running__")) {
+        return agentRequest(agent, "/api/launches/stop-running", { method: "POST", body: "{}" });
+      }
+      const results = await Promise.all((body.launch_ids || []).map(async (launchId) => {
+        try {
+          return await agentRequest(agent, "/api/launches/" + encodeURIComponent(launchId) + "/stop", {
+            method: "POST", body: "{}",
+          });
+        } catch (error) {
+          return { error: error.message };
+        }
+      }));
+      return { ok: results.every((item) => !item.error), results };
+    }
+    if (suffix === "/shutdown" && method === "POST") {
+      const result = await agentRequest(agent, "/api/shutdown", { method: "POST", body: "{}" });
+      agent.shutdown_requested_at = Date.now() / 1000;
+      agent.shutdown_boot_time = Number(agent.system?.boot_time || 0);
+      agent.status = "SHUTTING_DOWN";
+      await registryPut(agent);
+      return { ...result, host_status: "SHUTTING_DOWN" };
+    }
+  }
+
+  if (pathname === "/api/domains" && method === "GET") {
+    const ids = new Set(hosts.map((item) => Number(item.domain_id)).filter((value) => Number.isInteger(value) && value >= 0 && value <= 232));
+    if (selectedHost) {
+      ids.add(Number(selectedHost.domain_id));
+      try {
+        const config = await agentRequest(selectedHost, "/api/launch-config");
+        for (const item of config.launches || []) {
+          const domain = Number(item.ros_domain_id);
+          if (Number.isInteger(domain) && domain >= 0 && domain <= 232) ids.add(domain);
+        }
+      } catch (_) {
+        // Keep the configured default Domain ID available while offline.
+      }
+    }
+    return { domains: [...ids].sort((a, b) => a - b) };
+  }
+
+  if (pathname.startsWith("/api/rosbag/")) {
+    if (!selectedHost) throw makeApiError("ROSbagを操作するPCを先に選択してください。", 409);
+    if (pathname === "/api/rosbag/status" && method === "GET") {
+      return agentRequest(selectedHost, "/api/rosbag/status");
+    }
+    if (pathname === "/api/rosbag/topics" && method === "GET") {
+      return agentRequest(selectedHost, "/api/rosbag/topics" + (query ? "?" + query : ""));
+    }
+    if (pathname === "/api/rosbag/start" && method === "POST") {
+      return agentRequest(selectedHost, "/api/rosbag/start", { method: "POST", body: JSON.stringify(body) });
+    }
+    if (pathname === "/api/rosbag/stop" && method === "POST") {
+      return agentRequest(selectedHost, "/api/rosbag/stop", { method: "POST", body: "{}" });
+    }
+  }
+
+  throw makeApiError("未対応のAPI要求です: " + pathname, 404);
 }
 
 function showToast(message, duration = 3200) {
@@ -67,7 +486,8 @@ function setPage(name) {
 function statusClass(status) {
   return status === "ONLINE" ? "online" :
     status === "OFFLINE" ? "offline" :
-    status === "SHUTTING_DOWN" ? "shutting-down" : "unknown";
+    status === "SHUTTING_DOWN" ? "shutting-down" :
+    status === "ERROR" ? "offline" : "unknown";
 }
 
 function setStatus(element, status) {
@@ -131,12 +551,16 @@ function renderHosts() {
 }
 
 function beginEditHost(host) {
+  pendingPairingCode = "";
   editingHostId = host.id;
   const form = $("registerForm");
   form.elements.namedItem("name").value = host.name;
   form.elements.namedItem("address").value = host.address;
   form.elements.namedItem("port").value = host.port;
   form.elements.namedItem("domain_id").value = host.domain_id;
+  form.elements.namedItem("token").value = "";
+  form.elements.namedItem("token").required = false;
+  form.elements.namedItem("token").placeholder = "空欄なら既存Tokenを維持";
   $("hostFormTitle").textContent = "PC情報を編集";
   $("hostSubmitButton").textContent = "変更を保存";
   $("cancelHostEdit").classList.remove("hidden");
@@ -145,8 +569,11 @@ function beginEditHost(host) {
 }
 
 function cancelHostEdit() {
+  pendingPairingCode = "";
   editingHostId = null;
   $("registerForm").reset();
+  $("registerForm").elements.namedItem("token").required = true;
+  $("registerForm").elements.namedItem("token").placeholder = "Agent側で表示したToken";
   $("hostFormTitle").textContent = "PCを登録";
   $("hostSubmitButton").textContent = "PCを登録";
   $("cancelHostEdit").classList.add("hidden");
@@ -168,7 +595,7 @@ async function deleteHost(host) {
     }
     await loadHosts();
     await loadDomains();
-    showToast("PC登録を削除し、hosts.yamlを更新しました。");
+    showToast("スマートフォンのAgent登録を削除しました。");
   } catch (error) {
     showToast("PC登録の削除に失敗しました: " + error.message, 6000);
   }
@@ -225,7 +652,9 @@ async function refreshControl() {
     const domain = status.system && status.system.default_domain_id;
     if (domain !== undefined) $("controlDomainId").textContent = domain;
   } catch (error) {
-    const state = error.status === 502 || error.status === 503 ? "OFFLINE" : "UNKNOWN";
+    const state = [401, 409].includes(error.status) ? "ERROR" :
+      isShutdownPending(selectedHost) ? "SHUTTING_DOWN" :
+      [502, 503].includes(error.status) ? "OFFLINE" : "UNKNOWN";
     selectedHost.status = state;
     setStatus($("controlHostStatus"), state);
   }
@@ -733,6 +1162,12 @@ function renderTopicList() {
 }
 
 async function refreshTopics() {
+  if (!selectedHost) {
+    availableTopics = [];
+    topicLoadError = "先に管理対象PCを選択してください。";
+    renderTopicList();
+    return;
+  }
   const domainId = $("bagDomain").value;
   if (domainId === "") return;
   $("refreshTopics").disabled = true;
@@ -753,6 +1188,15 @@ async function refreshTopics() {
 }
 
 async function refreshBagStatus() {
+  if (!selectedHost) {
+    currentBag = null;
+    $("bagStatus").textContent = "PC未選択";
+    $("bagStatus").className = "bag-status stopped";
+    $("bagStart").disabled = true;
+    $("bagStop").disabled = true;
+    updateGlobalBagInfo();
+    return;
+  }
   try {
     currentBag = await api("/api/rosbag/status");
     const recording = Boolean(currentBag.recording);
@@ -793,7 +1237,7 @@ function updateGlobalBagInfo() {
   const info = currentBag && currentBag.recording_info;
   detail.textContent = info
     ? "Domain ID " + info.domain_id + " · " + (info.topics?.length || 0) + " topics"
-    : "現在、親PCで記録中のrosbagはありません。";
+    : "現在、選択したPCで記録中のrosbagはありません。";
   root.append(title, detail);
   const hint = document.createElement("p");
   hint.className = "help-text";
@@ -807,7 +1251,7 @@ async function startBag() {
   if (!domainId) return showToast("Domain IDを選択してください。");
   if (!topics.length) return showToast("記録するトピックを1つ以上選択してください。");
   if (currentBag && currentBag.recording) return showToast("すでにROSbagを記録中です。");
-  if (!window.confirm("Domain ID " + domainId + " の " + topics.length + " topicsを親PCに記録しますか？")) return;
+  if (!window.confirm("「" + (selectedHost?.name || "選択PC") + "」でDomain ID " + domainId + " の " + topics.length + " topicsを記録しますか？")) return;
   $("bagStart").disabled = true;
   $("bagMessage").textContent = "ROSbagを起動しています...";
   try {
@@ -884,10 +1328,10 @@ async function openDetails() {
     $("nodeList").textContent = "PCに接続できません。";
     $("systemInfo").replaceChildren();
   }
-  const bagInfo = await api("/api/rosbag/status").catch(() => null);
+  const bagInfo = selectedHost ? await api("/api/rosbag/status").catch(() => null) : null;
   const info = bagInfo && bagInfo.recording_info;
   renderDefinitionList($("detailRosbagInfo"), [
-    ["保存先", info?.output_path || "親PC / 記録停止中"],
+    ["保存先", info?.output_path || "選択PC / 記録停止中"],
     ["記録状態", bagInfo?.recording ? "RECORDING" : "STOPPED"],
     ["記録Domain ID", info?.domain_id ?? "-"],
   ]);
@@ -944,61 +1388,145 @@ function formatBytes(value) {
   return (Number(value) / (1024 ** 3)).toFixed(1) + " GB";
 }
 
+async function discoverAgents() {
+  const button = $("discoverAgents");
+  const root = $("discoveredAgents");
+  button.disabled = true;
+  root.textContent = "登録済みAgentから、LAN内のAgentを検索しています...";
+  try {
+    await loadHosts();
+    const knownIds = new Set(hosts.map((item) => item.id));
+    const reachable = hosts.filter((item) => item.status === "ONLINE");
+    const responses = await Promise.all(reachable.map(async (agent) => {
+      try {
+        const result = await agentRequest(agent, "/api/peers");
+        return result.peers || [];
+      } catch (error) {
+        return [];
+      }
+    }));
+    const seen = new Set(knownIds);
+    discoveredPeers = [];
+    for (const peer of responses.flat()) {
+      if (!peer.id || seen.has(peer.id)) continue;
+      seen.add(peer.id);
+      for (const address of peer.addresses || []) {
+        discoveredPeers.push({ ...peer, address });
+      }
+    }
+    renderDiscoveredPeers();
+  } catch (error) {
+    root.textContent = "Agent検索に失敗しました: " + error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderDiscoveredPeers() {
+  const root = $("discoveredAgents");
+  root.replaceChildren();
+  if (!discoveredPeers.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = hosts.length
+      ? "新しく発見されたAgentはありません。対象PCでAgentが起動しているか確認してください。"
+      : "最初のAgentはIPアドレスを手動入力して登録してください。登録後は、そのAgent経由でほかのAgentを発見できます。";
+    root.append(empty);
+    return;
+  }
+  for (const peer of discoveredPeers) {
+    const row = document.createElement("div");
+    row.className = "discovered-agent-row";
+    const description = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = peer.name || peer.id;
+    const address = document.createElement("div");
+    address.className = "muted";
+    address.textContent = peer.address + ":" + peer.port;
+    description.append(name, address);
+    const select = document.createElement("button");
+    select.className = "secondary-button";
+    select.type = "button";
+    select.textContent = "登録フォームへ";
+    select.addEventListener("click", () => {
+      const form = $("registerForm");
+      form.elements.namedItem("name").value = peer.name || "";
+      form.elements.namedItem("address").value = peer.address;
+      form.elements.namedItem("port").value = peer.port;
+      form.elements.namedItem("domain_id").value = Number(peer.domain_id ?? 32);
+      form.elements.namedItem("token").value = "";
+      form.elements.namedItem("token").required = true;
+      form.elements.namedItem("token").placeholder = "Agent側で表示したToken";
+      pendingPairingCode = "";
+      editingHostId = null;
+      $("hostFormTitle").textContent = "PCを登録";
+      $("hostSubmitButton").textContent = "PCを登録";
+      $("cancelHostEdit").classList.add("hidden");
+      $("registrationResult").classList.add("hidden");
+      $("registerPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+      form.elements.namedItem("token").focus();
+    });
+    row.append(description, select);
+    root.append(row);
+  }
+}
+
 async function registerHost(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
   const form = new FormData(formElement);
+  const wasEditing = editingHostId !== null;
   const payload = {
     name: form.get("name"),
     address: form.get("address"),
     port: Number(form.get("port")),
     domain_id: Number(form.get("domain_id")),
+    token: wasEditing ? "" : form.get("token"),
+    pairing_code: wasEditing ? "" : pendingPairingCode,
   };
 
-  const wasEditing = editingHostId !== null;
   try {
     if (wasEditing) {
-      await api("/api/hosts/" + editingHostId, {
+      await api("/api/hosts/" + encodeURIComponent(editingHostId), {
         method: "PUT",
         body: JSON.stringify(payload),
       });
-      editingHostId = null;
-      formElement.reset();
-      $("hostFormTitle").textContent = "PCを登録";
-      $("hostSubmitButton").textContent = "PCを登録";
-      $("cancelHostEdit").classList.add("hidden");
       $("registrationResult").textContent =
-        "PC情報を更新しました。config/hosts.yamlも更新されています。Agentトークンは変更していません。";
-      $("registrationResult").classList.remove("hidden");
-      showToast("PC情報を更新しました。");
+        "PC情報を更新しました。Agent Tokenは変更していません。";
     } else {
-      const result = await api("/api/hosts", {
+      const registered = await api("/api/hosts", {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      selectedHost = registered;
+      pendingPairingCode = "";
+      discoveredPeers = discoveredPeers.filter((peer) => peer.id !== registered.id);
       $("registrationResult").textContent =
-        "PCを登録しました。Agent側の設定ファイルに以下を反映してください。\n\n" +
-        "agent/config/agent.yaml の agent.token に次の値を設定します。\n" +
-        result.agent_token + "\n\n" +
-        result.agent_config +
-        "\n\n再確認が必要な場合は、このPCの詳細画面にある「Agent認証」から表示できます。";
-      $("registrationResult").classList.remove("hidden");
-      formElement.reset();
-      showToast("PCを登録し、config/hosts.yamlを更新しました。");
+        "Agentとの接続とToken認証に成功し、スマートフォンに登録しました。" +
+        " TokenはこのブラウザのIndexedDBに保存され、PC詳細画面から確認できます。";
     }
-
+    editingHostId = null;
+    formElement.reset();
+    formElement.elements.namedItem("token").required = true;
+    formElement.elements.namedItem("token").placeholder = "Agent側で表示したToken";
+    $("hostFormTitle").textContent = "PCを登録";
+    $("hostSubmitButton").textContent = "PCを登録";
+    $("cancelHostEdit").classList.add("hidden");
+    $("registrationResult").classList.remove("hidden");
     await loadHosts();
     await loadDomains();
+    renderDiscoveredPeers();
+    showToast(wasEditing ? "PC情報を更新しました。" : "Agentを登録しました。");
   } catch (error) {
     showToast(
-      (wasEditing ? "PC情報の更新" : "PC登録") +
-      "に失敗しました: " + error.message,
+      (wasEditing ? "PC情報の更新" : "Agent登録") + "に失敗しました: " + error.message,
       6000,
     );
   }
 }
 
 $("registerForm").addEventListener("submit", registerHost);
+$("discoverAgents").addEventListener("click", discoverAgents);
 $("cancelHostEdit").addEventListener("click", cancelHostEdit);
 $("backToHosts").addEventListener("click", () => setPage("hostsPage"));
 $("backToHostsFromBag").addEventListener("click", () => setPage("hostsPage"));
@@ -1054,31 +1582,19 @@ $("topicPicker").addEventListener("toggle", (event) => {
 });
 
 let pollTimer = null;
-let liveRefreshInProgress = false;
 
 async function refreshLiveData() {
-  if (!sessionStorage.getItem("managerSession") || liveRefreshInProgress) return;
+  if (liveRefreshInProgress) return;
   liveRefreshInProgress = true;
   try {
     const hostsUpdated = await loadHosts();
     if (!hostsUpdated) return;
     if (selectedHost && !$("controlPage").classList.contains("hidden")) {
       await refreshControl();
-    } else {
-      await refreshBagStatus();
     }
   } finally {
     liveRefreshInProgress = false;
   }
-}
-
-function showLoginPage() {
-  clearDetailAgentToken();
-  $("appHeader").classList.add("hidden");
-  for (const page of ["hostsPage", "controlPage", "detailsPage", "launchSettingsPage", "rosbagPage"]) {
-    $(page).classList.add("hidden");
-  }
-  $("loginPage").classList.remove("hidden");
 }
 
 function showDashboard() {
@@ -1087,34 +1603,12 @@ function showDashboard() {
   setPage("hostsPage");
 }
 
-async function submitLogin(event) {
-  event.preventDefault();
-  $("loginMessage").textContent = "認証しています...";
-  try {
-    const response = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: $("loginPassword").value }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.detail || "ログインに失敗しました");
-    sessionStorage.setItem("managerSession", result.session_token);
-    $("loginPassword").value = "";
-    $("loginMessage").textContent = "";
-    showDashboard();
-    await initializeDashboard();
-  } catch (error) {
-    $("loginMessage").textContent = error.message;
-  }
-}
-
 async function initializeDashboard() {
   await loadHosts();
   await loadDomains();
-  await refreshTopics();
-  await refreshBagStatus();
+  renderDiscoveredPeers();
   if (pollTimer) window.clearInterval(pollTimer);
-  pollTimer = window.setInterval(refreshLiveData, 3000);
+  pollTimer = window.setInterval(refreshLiveData, 5000);
 }
 
 document.addEventListener("visibilitychange", () => {
@@ -1124,19 +1618,16 @@ window.addEventListener("pageshow", () => refreshLiveData());
 window.addEventListener("focus", () => refreshLiveData());
 
 async function initialize() {
-  $("loginForm").addEventListener("submit", submitLogin);
-  const token = sessionStorage.getItem("managerSession");
-  if (!token) {
-    showLoginPage();
-    return;
+  if (!window.indexedDB) {
+    showToast("このブラウザではAgent登録情報を保存できません。IndexedDB対応ブラウザを使用してください。", 8000);
   }
-  try {
-    await api("/api/session");
-    showDashboard();
-    await initializeDashboard();
-  } catch (error) {
-    sessionStorage.removeItem("managerSession");
-    showLoginPage();
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register("./service-worker.js", { scope: "./" }).catch((error) => {
+      console.warn("PWA service worker registration failed:", error);
+    });
   }
+  showDashboard();
+  await initializeDashboard();
+  applyPairingFromHash();
 }
 initialize();

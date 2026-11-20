@@ -132,3 +132,12 @@ p { margin: 5px 0 0; }
   .launch-argument-row { grid-template-columns: 1fr 1fr; }
   .launch-argument-row button { grid-column: 1 / -1; }
 }
+
+.discovered-agent-list { display: grid; gap: 8px; margin-top: 10px; }
+.discovered-agent-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: #132135; }
+.discovered-agent-row strong { overflow-wrap: anywhere; }
+.discovered-agent-row .secondary-button { flex: 0 0 auto; }
+@media (max-width: 420px) {
+  .discovered-agent-row { align-items: flex-start; flex-direction: column; }
+  .discovered-agent-row .secondary-button { width: 100%; }
+}

@@ -4,8 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#101827">
+  <meta name="description" content="スマートフォンからLAN内のROS 2 PCとAgentを直接管理します。">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>ROS PC Manager</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icon.svg">
+  <link rel="stylesheet" href="./static/style.css">
 </head>
 <body>
   <header id="appHeader" class="app-header hidden">
@@ -13,17 +19,10 @@
   </header>
 
   <main>
-    <section id="loginPage" class="page login-page">
+    <section id="loginPage" class="page login-page hidden">
       <div class="panel">
         <h1>ROS PC Manager</h1>
-        <p class="muted">管理パスワードを入力してください。</p>
-        <form id="loginForm" class="form-grid">
-          <label class="span-all">管理パスワード
-            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
-          </label>
-          <button class="primary-button span-all" type="submit">ログイン</button>
-        </form>
-        <div id="loginMessage" class="inline-message" aria-live="polite"></div>
+        <p class="muted">中央管理サーバーや管理者ログインは不要です。Agentごとに接続・認証します。</p>
       </div>
     </section>
 
@@ -31,8 +30,21 @@
       <div class="page-heading">
         <div>
           <h1>登録済みPC</h1>
+          <p class="muted">スマートフォンから各Agentへ直接接続します。</p>
         </div>
       </div>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>LAN内のAgentを検索</h2>
+          <button id="discoverAgents" class="secondary-button" type="button">Agentを検索</button>
+        </div>
+        <p class="help-text">登録済みAgentからmDNSで発見したPCを表示します。最初の1台だけはIPアドレスを手動登録してください。</p>
+        <div id="discoveredAgents" class="discovered-agent-list">
+          <p class="muted">Agentを登録すると、そこからLAN内のほかのAgentを検索できます。</p>
+        </div>
+      </section>
+
       <div id="hostCards" class="host-grid">
         <div class="empty-card">登録済みPCはありません。</div>
       </div>
@@ -41,10 +53,10 @@
         <h2 id="hostFormTitle">PCを登録</h2>
         <form id="registerForm" class="form-grid">
           <label>表示名
-            <input name="name" required maxlength="80" placeholder="robot-a">
+            <input name="name" required maxlength="80" placeholder="robot-a" autocomplete="off">
           </label>
-          <label>IPアドレス
-            <input name="address" required inputmode="decimal" placeholder="192.168.1.20">
+          <label>IPアドレスまたはホスト名
+            <input name="address" required placeholder="192.168.1.20 または robot-pc.local" autocomplete="off">
           </label>
           <label>Agentポート
             <input name="port" type="number" min="1" max="65535" value="8765" required>
@@ -52,6 +64,11 @@
           <label>デフォルトDomain ID
             <input name="domain_id" type="number" min="0" max="232" value="32" required>
           </label>
+          <label class="span-all">Agent Token
+            <input name="token" type="password" minlength="24" required autocomplete="off"
+              placeholder="Agent PCで scripts/show_agent_token.sh を実行">
+          </label>
+          <p class="help-text span-all">登録時にAgentへ直接接続してTokenを検証します。TokenはこのブラウザのIndexedDBに保存され、ネットワークへはHTTPSまたは同一LAN内HTTPで送信されます。</p>
           <button id="hostSubmitButton" class="primary-button span-all" type="submit">PCを登録</button>
           <button id="cancelHostEdit" class="secondary-button span-all hidden" type="button">編集をキャンセル</button>
         </form>
@@ -97,7 +114,7 @@
       <section id="bagPanel" class="panel">
         <div class="section-title">
           <h2>ROSbag管理</h2>
-          <span class="muted">親PCに記録</span>
+          <span class="muted">選択したPCに記録</span>
         </div>
         <label class="field-label" for="bagDomain">記録対象Domain ID</label>
         <select id="bagDomain" class="large-select"></select>
@@ -121,7 +138,7 @@
           </div>
         </details>
         <div id="topicCount" class="muted topic-count">選択中：0 topics</div>
-        <div id="bagStatus" class="bag-status stopped">● STOPPED</div>
+        <div id="bagStatus" class="bag-status stopped">○ STOPPED</div>
         <div class="button-row bag-actions">
           <button id="bagStart" class="primary-button large-action">記録開始</button>
           <button id="bagStop" class="danger-button large-action">記録停止</button>
@@ -166,7 +183,7 @@
         <button id="backToControlFromLaunchSettings" class="secondary-button">← PC操作画面</button>
         <h1>launch設定</h1>
       </div>
-      <p class="help-text">このPCで起動するlaunchを登録・編集します。設定は対象PCのlaunches.yamlに保存されます。</p>
+      <p class="help-text">このPCで起動するlaunchを登録・編集します。設定は対象Agentのlaunches.yamlに保存されます。</p>
       <div id="launchConfigList" class="launch-config-list">
         <div class="muted">設定を読み込んでいます...</div>
       </div>
@@ -176,7 +193,7 @@
         <h2 id="launchEditorTitle">launchを追加</h2>
         <form id="launchConfigForm" class="form-grid">
           <label class="span-all">表示名
-            <input id="launchDisplayName" maxlength="120" required placeholder="例：敵ロボット全体起動">
+            <input id="launchDisplayName" maxlength="120" required placeholder="例：robot bringup">
           </label>
           <label class="span-all">登録済みWorkspace
             <select id="savedWorkspaceSelect" class="large-select">
@@ -224,7 +241,7 @@
     <section id="rosbagPage" class="page hidden">
       <div class="page-heading">
         <h1>ROSbag管理</h1>
-        <p class="muted">親PCが指定Domain IDのDDS通信を記録します。</p>
+        <p class="muted">選択したAgentのPC上で指定Domain IDのDDS通信を記録します。</p>
       </div>
       <div id="globalBagInfo" class="panel"></div>
       <button id="backToHostsFromBag" class="secondary-button">PC一覧へ戻る</button>
@@ -232,6 +249,6 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="/static/app.js" defer></script>
+  <script src="./static/app.js" defer></script>
 </body>
 </html>
