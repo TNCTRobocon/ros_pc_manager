@@ -18,7 +18,7 @@ Agent A ── mDNS ── Agent B
    └────── Agent C ───┘
 ```
 
-- `agent/pc_manager_agent`: 各PCで動作するAgent API、ROS 2監視、Launch管理、ROSbag管理、mDNS発見。
+- `agent/pc_manager_agent`: 各PCで動作するAgent API、ROS 2 Launch管理、ROSbag管理、mDNS発見。
 - `frontend`: スマートフォン用Web GUIとPWAの静的ファイル。
 - `scripts`: Agent設定作成、Token確認、systemd自動起動。
 - `deploy/systemd`: Agentのsystemdユニット例。
@@ -32,7 +32,7 @@ Agent A ── mDNS ── Agent B
 - AgentのmDNS自動発見とIPアドレス手動登録
 - AgentごとのBearer Token認証
 - PC情報・Agent Tokenのスマートフォン側保存
-- ROS 2ノード・システム情報の表示
+- PC基本情報・CPU・メモリ・ディスクなどのシステム情報表示
 - Agentが管理するLaunchの起動・停止・状態表示
 - Launch設定の追加・編集・削除・検証
 - 選択したAgent上でのROSbag記録・停止
@@ -252,7 +252,7 @@ sudo -n -l /usr/bin/systemctl poweroff
 - Agent側はAgent Tokenを`agent/config/agent.yaml`に保存します。Tokenはファイル権限0600で保護してください。
 - Agent TokenはmDNS広告に含めません。
 - Agentの操作APIはBearer Token認証を必須とし、CORSはPWAの配信元とLAN内HTTP AgentのOriginに限定します。
-- Agentの`/health`だけは、ネットワーク監視のため認証なしで応答します。ノード情報・Launch・ROSbag・シャットダウンAPIにはTokenが必要です。
+- Agentの`/health`だけは、ネットワーク監視のため認証なしで応答します。システム情報・Launch・ROSbag・シャットダウンAPIにはTokenが必要です。
 - PWAのService WorkerはHTML・CSS・JavaScriptなどの静的ファイルだけをキャッシュします。Agent API・Token・ROS 2状態はキャッシュしません。
 - ブラウザのサイトデータを消去すると、保存したAgent一覧とTokenも消えます。その場合はTokenを再入力して登録してください。
 - 通信はLAN内HTTPです。信頼できる隔離LANで使用し、外部公開しないでください。

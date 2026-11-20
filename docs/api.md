@@ -25,7 +25,7 @@ never contains the Agent token.
 
 ### Status and peer discovery
 
-- `GET /api/status`: PC information, ROS 2 node names, and managed Launch states.
+- `GET /api/status`: PC and system information plus managed Launch states.
 - `GET /api/peers`: this Agent identity and mDNS-discovered peers (ID, name,
   private IPv4 addresses, port, protocol). No credentials are shared.
 

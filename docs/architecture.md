@@ -4,8 +4,8 @@
 
 1. **Mobile browser / PWA**: static responsive frontend. The browser stores
    Agent inventory and per-Agent bearer tokens in IndexedDB.
-2. **Per-PC Agent**: FastAPI server, ROS 2 monitoring, managed Launch
-   lifecycle, ROSbag recording, shutdown, and mDNS discovery.
+2. **Per-PC Agent**: FastAPI server, managed ROS 2 Launch lifecycle,
+   ROSbag recording, shutdown, and mDNS discovery.
 3. **mDNS/DNS-SD**: Agents advertise their identity and discover peer
    metadata. Peer announcements contain no secrets and grant no control
    permissions.

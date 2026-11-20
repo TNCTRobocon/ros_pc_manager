@@ -45,6 +45,12 @@ def test_agent_api_requires_per_pc_bearer_token(tmp_path: Path):
 
     assert client.get("/health").status_code == 200
     assert client.get("/api/launches").status_code == 401
+    status = client.get(
+        "/api/status",
+        headers={"Authorization": "Bearer " + settings.token},
+    )
+    assert status.status_code == 200
+    assert "ros_nodes" not in status.json()["system"]
     response = client.get(
         "/api/launches",
         headers={"Authorization": "Bearer " + settings.token},

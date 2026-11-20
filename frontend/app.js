@@ -1291,7 +1291,6 @@ async function openDetails() {
   $("detailTitle").textContent = selectedHost.name + " 詳細";
   $("basicInfo").replaceChildren();
   $("systemInfo").replaceChildren();
-  $("nodeList").textContent = "読み込み中...";
   try {
     const status = await api("/api/hosts/" + selectedHost.id + "/status");
     const system = status.system || {};
@@ -1310,22 +1309,8 @@ async function openDetails() {
       ["ディスク空き", formatBytes(system.disk_free_bytes)],
       ["CPU温度", system.cpu_temperature_c == null ? "取得不可" : Number(system.cpu_temperature_c).toFixed(1) + " °C"],
     ]);
-    const nodes = system.ros_nodes || [];
-    const root = $("nodeList");
-    root.replaceChildren();
-    if (!nodes.length) {
-      root.textContent = "ノードを取得できませんでした（ROS 2環境またはDomain IDを確認してください）。";
-    } else {
-      for (const node of nodes) {
-        const item = document.createElement("div");
-        item.className = "node-item";
-        item.textContent = node;
-        root.append(item);
-      }
-    }
   } catch (error) {
     $("basicInfo").textContent = "情報を取得できません: " + error.message;
-    $("nodeList").textContent = "PCに接続できません。";
     $("systemInfo").replaceChildren();
   }
   const bagInfo = selectedHost ? await api("/api/rosbag/status").catch(() => null) : null;

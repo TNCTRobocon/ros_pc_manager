@@ -48,7 +48,7 @@ def main() -> int:
         "--address",
         help="LAN IPv4 address to put in the QR code (required when multiple addresses exist).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(sys.argv[2:])
 
     config_path = Path(sys.argv[1])
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}

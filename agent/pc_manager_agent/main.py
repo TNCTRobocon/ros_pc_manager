@@ -6,7 +6,6 @@ import hmac
 import os
 import platform
 import secrets
-import shlex
 import socket
 import subprocess
 import threading
@@ -91,32 +90,6 @@ def create_app(settings: AgentSettings) -> FastAPI:
         if not hmac.compare_digest(supplied, settings.token):
             raise HTTPException(status_code=401, detail="Invalid agent token")
 
-    def ros_nodes() -> list[str]:
-        if not settings.ros_setup.is_file():
-            return []
-        command = (
-            f"source {shlex.quote(str(settings.ros_setup))} && "
-            f"export ROS_DOMAIN_ID={settings.default_domain_id} && "
-            "ros2 node list --no-daemon"
-        )
-        try:
-            result = subprocess.run(
-                ["/bin/bash", "-c", command],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                env=os.environ.copy(),
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return []
-        if result.returncode != 0:
-            return []
-        return sorted({
-            line.strip()
-            for line in result.stdout.splitlines()
-            if line.strip()
-        })
-
     def system_info() -> dict[str, Any]:
         memory = psutil.virtual_memory()
         root_disk = psutil.disk_usage("/")
@@ -154,7 +127,6 @@ def create_app(settings: AgentSettings) -> FastAPI:
             "disk_percent": root_disk.percent,
             "disk_free_bytes": root_disk.free,
             "cpu_temperature_c": temperatures,
-            "ros_nodes": ros_nodes(),
         }
 
     @app.get("/")
