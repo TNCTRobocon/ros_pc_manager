@@ -86,12 +86,13 @@ if [[ "$legacy_manual_file" -eq 0 ]]; then
 fi
 
 sudo visudo -c >/dev/null || fail "sudoers全体の構文検証に失敗しました。"
-permission_list="$(sudo -n -l /usr/bin/systemctl poweroff 2>&1)" || {
+# Query the complete privilege list. A command-specific 'sudo -l COMMAND'
+# query can format/filter entries differently across sudo versions.
+permission_list="$(sudo -n -l 2>&1)" || {
   echo "$permission_list" >&2
-  fail "シャットダウン権限を確認できませんでした。"
+  fail "sudo権限一覧を取得できませんでした。"
 }
-if ! grep -Fq "NOPASSWD:" <<<"$permission_list" ||
-   ! grep -Fq "/usr/bin/systemctl poweroff" <<<"$permission_list"; then
+if ! grep -Eq '^[[:space:]]*\(root\)[[:space:]]+NOPASSWD:[[:space:]]+/usr/bin/systemctl[[:space:]]+poweroff[[:space:]]*$' <<<"$permission_list"; then
   echo "$permission_list" >&2
   fail "パスワードなしのシャットダウン権限を確認できませんでした。"
 fi

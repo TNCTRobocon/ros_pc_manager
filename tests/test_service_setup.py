@@ -218,6 +218,13 @@ def test_agent_service_setup_automatically_configures_shutdown_permission():
     assert '"$ROOT/scripts/setup_shutdown_permission.sh"' in script
 
 
+def test_shutdown_permission_check_uses_complete_sudo_list():
+    script = (ROOT / "scripts" / "setup_shutdown_permission.sh").read_text(encoding="utf-8")
+    assert 'permission_list="$(sudo -n -l 2>&1)"' in script
+    assert "sudo -n -l /usr/bin/systemctl poweroff" not in script
+    assert r"\(root\)[[:space:]]+NOPASSWD:" in script
+
+
 def test_render_shutdown_sudoers_grants_only_poweroff():
     rendered = render_shutdown_sudoers("miquiteru")
 
