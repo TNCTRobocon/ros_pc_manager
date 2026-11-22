@@ -32,6 +32,42 @@ p { margin: 5px 0 0; }
 .help-text { font-size: .84rem; line-height: 1.5; margin-top: 10px; }
 .panel, .host-card, .empty-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
 .host-grid { display: grid; gap: 10px; }
+.add-host-panel {
+  border: 1px solid var(--accent);
+  border-radius: 16px;
+  padding: 10px;
+  background: #15263b;
+}
+.add-host-toggle {
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: #203d60;
+  color: var(--text);
+  text-align: left;
+  font-size: 1.05rem;
+  font-weight: 850;
+}
+.add-host-toggle:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.host-registration-content {
+  display: grid;
+  gap: 20px;
+  margin-top: 12px;
+  padding: 16px 5px 5px;
+  border-top: 1px solid var(--accent);
+}
+.host-add-section { min-width: 0; }
+.host-add-section + .host-add-section {
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.host-add-section .section-title { margin-bottom: 10px; }
+.register-panel { margin-top: 0; }
+.host-add-section .form-grid { margin-top: 12px; }
+.host-add-section .help-text { margin-top: 8px; }
+.host-add-section .discovered-agent-list { margin-top: 12px; }
 .host-card-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 8px; }
 .host-card { width: 100%; min-width: 0; text-align: left; color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .host-card:active { transform: scale(.99); }
@@ -63,7 +99,7 @@ p { margin: 5px 0 0; }
 .large-action { flex: 1; }
 .shutdown-button { width: 100%; min-height: 62px; font-size: 1.15rem; margin-top: 2px; }
 .inline-message { min-height: 1.2em; color: var(--muted); font-size: .9rem; margin-top: 8px; overflow-wrap: anywhere; }
-.register-panel { margin-top: 4px; }
+.register-panel { margin-top: 0; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
 .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: .9rem; color: var(--muted); }
 .span-all { grid-column: 1 / -1; }

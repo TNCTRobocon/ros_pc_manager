@@ -34,45 +34,50 @@
         </div>
       </div>
 
-      <section class="panel">
-        <div class="section-title">
-          <h2>LAN内のAgentを検索</h2>
-          <button id="discoverAgents" class="secondary-button" type="button">Agentを検索</button>
-        </div>
-        <p class="help-text">登録済みAgentからmDNSで発見したPCを表示します。最初の1台だけはIPアドレスを手動登録してください。</p>
-        <div id="discoveredAgents" class="discovered-agent-list">
-          <p class="muted">Agentを登録すると、そこからLAN内のほかのAgentを検索できます。</p>
-        </div>
-      </section>
-
       <div id="hostCards" class="host-grid">
-        <div class="empty-card">登録済みPCはありません。</div>
+        <div class="empty-card">登録済みPCはありません。「＋ 管理するPCを追加」から登録してください。</div>
       </div>
 
-      <section id="registerPanel" class="panel register-panel">
-        <h2 id="hostFormTitle">PCを登録</h2>
-        <form id="registerForm" class="form-grid">
-          <label>表示名
-            <input name="name" required maxlength="80" placeholder="robot-a" autocomplete="off">
-          </label>
-          <label>IPアドレスまたはホスト名
-            <input name="address" required placeholder="192.168.1.20 または robot-pc.local" autocomplete="off">
-          </label>
-          <label>Agentポート
-            <input name="port" type="number" min="1" max="65535" value="8765" required>
-          </label>
-          <label>デフォルトDomain ID
-            <input name="domain_id" type="number" min="0" max="232" value="32" required>
-          </label>
-          <label class="span-all">Agent Token
-            <input name="token" type="password" minlength="24" required autocomplete="off"
-              placeholder="Agent PCで scripts/show_agent_token.sh を実行">
-          </label>
-          <p class="help-text span-all">登録時にAgentへ直接接続してTokenを検証します。TokenはこのブラウザのIndexedDBに保存され、ネットワークへはHTTPSまたは同一LAN内HTTPで送信されます。</p>
-          <button id="hostSubmitButton" class="primary-button span-all" type="submit">PCを登録</button>
-          <button id="cancelHostEdit" class="secondary-button span-all hidden" type="button">編集をキャンセル</button>
-        </form>
-        <div id="registrationResult" class="notice hidden"></div>
+      <section id="addHostPanel" class="add-host-panel">
+        <button id="toggleAddHostPanel" class="add-host-toggle" type="button"
+          aria-expanded="false" aria-controls="hostRegistrationContent">＋ 管理するPCを追加</button>
+        <div id="hostRegistrationContent" class="host-registration-content hidden">
+          <section class="host-add-section">
+            <div class="section-title">
+              <h2>Agentを検索してPCを登録</h2>
+              <button id="discoverAgents" class="secondary-button" type="button">Agentを検索</button>
+            </div>
+            <p class="help-text">起動中のPCの登録済みAgentが、新しくAgentが起動されたPCをLAN内で自動検索します。</p>
+            <div id="discoveredAgents" class="discovered-agent-list">
+              <p class="muted">「Agentを検索」を押すと、新しく見つかったAgentを表示します。</p>
+            </div>
+          </section>
+
+          <section id="registerPanel" class="host-add-section register-panel">
+            <h2 id="hostFormTitle">手動でPCを登録</h2>
+            <form id="registerForm" class="form-grid">
+              <label>表示名
+                <input name="name" required maxlength="80" placeholder="robot-a" autocomplete="off">
+              </label>
+              <label>IPアドレスまたはホスト名
+                <input name="address" required placeholder="192.168.1.20 または robot-pc.local" autocomplete="off">
+              </label>
+              <label>Agentポート
+                <input name="port" type="number" min="1" max="65535" value="8765" required>
+              </label>
+              <label>デフォルトDomain ID
+                <input name="domain_id" type="number" min="0" max="232" value="32" required>
+              </label>
+              <label class="span-all">Agent Token
+                <input name="token" type="password" minlength="24" required autocomplete="off"
+                  placeholder="Agent PCで scripts/show_agent_token.sh を実行">
+              </label>
+              <button id="hostSubmitButton" class="primary-button span-all" type="submit">PCを登録</button>
+              <button id="cancelHostEdit" class="secondary-button span-all hidden" type="button">編集をキャンセル</button>
+            </form>
+            <div id="registrationResult" class="notice hidden"></div>
+          </section>
+        </div>
       </section>
     </section>
 

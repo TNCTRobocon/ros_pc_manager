@@ -15,6 +15,13 @@ let discoveredPeers = [];
 let pendingPairingCode = "";
 let liveRefreshInProgress = false;
 
+function setHostRegistrationExpanded(expanded) {
+  const content = $("hostRegistrationContent");
+  const toggle = $("toggleAddHostPanel");
+  content.classList.toggle("hidden", !expanded);
+  toggle.setAttribute("aria-expanded", String(expanded));
+}
+
 const REGISTRY_DB = "ros-pc-manager";
 const REGISTRY_STORE = "agents";
 let registryDbPromise = null;
@@ -118,6 +125,7 @@ function applyPairingFromHash() {
     $("hostSubmitButton").textContent = "ペアリングして登録";
     $("cancelHostEdit").classList.add("hidden");
     $("registrationResult").classList.add("hidden");
+    setHostRegistrationExpanded(true);
     $("registerPanel").scrollIntoView({ behavior: "smooth", block: "start" });
 
     // The one-time code must not be sent to the web server in the URL.
@@ -565,6 +573,7 @@ function beginEditHost(host) {
   $("hostSubmitButton").textContent = "変更を保存";
   $("cancelHostEdit").classList.remove("hidden");
   $("registrationResult").classList.add("hidden");
+  setHostRegistrationExpanded(true);
   $("registerPanel").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -574,7 +583,7 @@ function cancelHostEdit() {
   $("registerForm").reset();
   $("registerForm").elements.namedItem("token").required = true;
   $("registerForm").elements.namedItem("token").placeholder = "Agent側で表示したToken";
-  $("hostFormTitle").textContent = "PCを登録";
+  $("hostFormTitle").textContent = "手動でPCを登録";
   $("hostSubmitButton").textContent = "PCを登録";
   $("cancelHostEdit").classList.add("hidden");
   $("registrationResult").classList.add("hidden");
@@ -1377,7 +1386,7 @@ async function discoverAgents() {
   const button = $("discoverAgents");
   const root = $("discoveredAgents");
   button.disabled = true;
-  root.textContent = "登録済みAgentから、LAN内のAgentを検索しています...";
+  root.textContent = "LAN内で新しく起動したAgentを検索しています...";
   try {
     await loadHosts();
     const knownIds = new Set(hosts.map((item) => item.id));
@@ -1444,10 +1453,11 @@ function renderDiscoveredPeers() {
       form.elements.namedItem("token").placeholder = "Agent側で表示したToken";
       pendingPairingCode = "";
       editingHostId = null;
-      $("hostFormTitle").textContent = "PCを登録";
+      $("hostFormTitle").textContent = "手動でPCを登録";
       $("hostSubmitButton").textContent = "PCを登録";
       $("cancelHostEdit").classList.add("hidden");
       $("registrationResult").classList.add("hidden");
+      setHostRegistrationExpanded(true);
       $("registerPanel").scrollIntoView({ behavior: "smooth", block: "start" });
       form.elements.namedItem("token").focus();
     });
@@ -1494,7 +1504,7 @@ async function registerHost(event) {
     formElement.reset();
     formElement.elements.namedItem("token").required = true;
     formElement.elements.namedItem("token").placeholder = "Agent側で表示したToken";
-    $("hostFormTitle").textContent = "PCを登録";
+    $("hostFormTitle").textContent = "手動でPCを登録";
     $("hostSubmitButton").textContent = "PCを登録";
     $("cancelHostEdit").classList.add("hidden");
     $("registrationResult").classList.remove("hidden");
@@ -1511,6 +1521,10 @@ async function registerHost(event) {
 }
 
 $("registerForm").addEventListener("submit", registerHost);
+$("toggleAddHostPanel").addEventListener("click", () => {
+  const expanded = $("toggleAddHostPanel").getAttribute("aria-expanded") === "true";
+  setHostRegistrationExpanded(!expanded);
+});
 $("discoverAgents").addEventListener("click", discoverAgents);
 $("cancelHostEdit").addEventListener("click", cancelHostEdit);
 $("backToHosts").addEventListener("click", () => setPage("hostsPage"));
