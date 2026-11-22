@@ -2,7 +2,17 @@
 
 スマートフォンのブラウザから、同一LAN内にある複数のROS 2 PCを直接管理するWebアプリです。
 
-**中央管理サーバー・親PC・中央データベースは必要ありません。** 各PCでAgentを起動し、スマートフォンのブラウザにAgent一覧とTokenを保存します。Agentはそれぞれ自分のPCだけを管理します。
+各PCでAgentを起動し、スマートフォンのブラウザにAgent一覧とTokenを保存します。Agentはそれぞれ自分のPCだけを管理します。
+
+(home/(user)/ros_pc_managerに)<https://github.com/TNCTRobocon/ros_pc_manager.git>からクローンできます。
+
+## PCを登録
+
+'''text
+cd ~/ros_pc_manager
+./scripts/show_agent_pairing.sh --address (hostname -I の結果)
+'''
+表示されたQRコードをスマホのカメラアプリから読み取り、「PCを登録」を選択すれば登録完了です。
 
 ## アーキテクチャ
 
@@ -70,7 +80,7 @@ http://<AgentのIPアドレス>:8765/
 
 ## 1. 各PCへのインストール
 
-Ubuntu 24.04 / Python 3.12 / ROS 2 Jazzyを想定しています。**管理したい各PCで**同じリポジトリを配置し、次を実行してください。
+Ubuntu 24.04 / Python 3.12 / ROS 2 Jazzyを想定しています。管理したい各PCで同じリポジトリを配置し、次を実行してください。
 
 ```bash
 cd /home/<user>/ros_pc_manager
@@ -172,7 +182,7 @@ launches:
 
 ## 6. ROSbag
 
-ROSbagは親PCではなく、**GUIで選択したAgentのPC上**で動作します。
+ROSbagはGUIで選択したAgentのPC上で動作します。
 
 - Topic Discoveryは選択したAgent上で、指定Domain IDを使用して実行します。
 - 選択したTopicだけをrosbag2に渡します。
