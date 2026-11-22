@@ -91,7 +91,7 @@ Python依存関係をインストールします。mDNS用の`zeroconf`もこの
 
 ## 2. Agent設定と自動起動
 
-systemd登録・OS起動時の自動起動・Agent起動をまとめて行います。
+systemd登録・OS起動時の自動起動・Agent起動・スマートフォンからのシャットダウン権限設定をまとめて行います。
 
 ```bash
 ./scripts/setup_agent_service.sh
@@ -104,7 +104,7 @@ systemd登録・OS起動時の自動起動・Agent起動をまとめて行いま
 
 Agent IDはPCごとに生成され、設定ファイルに保存されます。Agent Tokenが未設定またはサンプル値の場合は、暗号学的乱数で自動生成します。既に有効なTokenが設定されている場合は維持します。Tokenは`agent.yaml`に保存され、ファイル権限は0600です。
 
-このスクリプトはsystemdへの登録、自動起動ON、Agentの起動まで実行します。通常ユーザーで実行してください（必要な操作ではスクリプト内からsudoを要求します）。
+このスクリプトはsystemdへの登録、自動起動ON、シャットダウン権限の設定、Agentの起動まで実行します。通常ユーザーで実行してください。sudoの認証情報が有効でない場合は、途中で管理者パスワードをターミナルに入力します。パスワードは保存しません。
 
 ### 手動起動で試す場合
 
@@ -232,29 +232,23 @@ Agent APIはTCP 8765（既定）で待ち受けます。ファイアウォール
 
 ## 9. シャットダウン権限
 
-Agentは通常ユーザーで動かし、必要な場合に限り`sudo -n /usr/bin/systemctl poweroff`を呼び出します。root権限全体をAgentに渡さないでください。
+`setup_agent_service.sh` がAgentをインストールするとき、Agentの実行ユーザーに対してシャットダウン権限も自動設定します。sudoの認証情報が有効でない場合、セットアップ中に管理者パスワードを一度入力してください。パスワードは保存されません。
 
-対象PCで次を実行します。
+Agentは通常ユーザーで動作し、シャットダウンAPIから必要な場合に限り`sudo -n /usr/bin/systemctl poweroff`を呼び出します。許可するのはこのコマンドだけで、root権限全体は付与しません。
 
-```bash
-sudo visudo -f /etc/sudoers.d/ros-pc-manager
-```
-
-次の1行を追加し、ユーザー名をAgent実行ユーザーに置き換えます。
-
-```text
-<AGENT_USER> ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
-```
-
-権限と構文を確認します。
+権限だけを後から設定・再確認する場合：
 
 ```bash
-sudo chmod 0440 /etc/sudoers.d/ros-pc-manager
-sudo visudo -cf /etc/sudoers.d/ros-pc-manager
-sudo -n -l /usr/bin/systemctl poweroff
+./scripts/setup_shutdown_permission.sh
 ```
 
-許可するのはシャットダウンコマンドだけです。設定はシャットダウン対象となる各PCで個別に行ってください。
+ROS PC Managerが自動作成した権限を解除する場合：
+
+```bash
+./scripts/remove_shutdown_permission.sh
+```
+
+設定先は`/etc/sudoers.d/ros-pc-manager`です。構文検証には`visudo`を使用します。既存ファイルがこのスクリプトの管理対象でない場合や、想定外のルールを含む場合は上書きせず停止します。
 
 ## 10. 保存データとセキュリティ
 
@@ -283,7 +277,7 @@ sudo systemctl disable --now pc-manager-server.service
 
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
-bash -n scripts/setup.sh scripts/run_agent.sh scripts/prepare_agent_config.sh scripts/setup_agent_service.sh scripts/show_agent_token.sh scripts/show_agent_pairing.sh
+bash -n scripts/setup.sh scripts/run_agent.sh scripts/prepare_agent_config.sh scripts/setup_agent_service.sh scripts/setup_shutdown_permission.sh scripts/remove_shutdown_permission.sh scripts/show_agent_token.sh scripts/show_agent_pairing.sh
 .venv/bin/python -m compileall -q scripts agent tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests -q
 node --check frontend/app.js

@@ -14,6 +14,7 @@ from service_setup import (  # noqa: E402
     SetupError,
     ensure_agent_files,
     ensure_server_configs,
+    render_shutdown_sudoers,
     render_unit,
     validate_agent_config,
 )
@@ -210,6 +211,26 @@ def test_ensure_server_configs_creates_only_missing_files(tmp_path: Path):
     assert server_config.read_text(encoding="utf-8") == existing_text
     assert server_config.stat().st_mode & 0o777 == 0o600
     assert (config_dir / "domains.yaml").is_file()
+
+
+def test_agent_service_setup_automatically_configures_shutdown_permission():
+    script = (ROOT / "scripts" / "setup_agent_service.sh").read_text(encoding="utf-8")
+    assert '"$ROOT/scripts/setup_shutdown_permission.sh"' in script
+
+
+def test_render_shutdown_sudoers_grants_only_poweroff():
+    rendered = render_shutdown_sudoers("miquiteru")
+
+    assert rendered.splitlines() == [
+        "# Managed by ROS PC Manager setup scripts. Do not edit manually.",
+        "miquiteru ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff",
+    ]
+
+
+@pytest.mark.parametrize("username", ["", "bad user", "user;ALL", "root\nALL"])
+def test_render_shutdown_sudoers_rejects_invalid_username(username: str):
+    with pytest.raises(SetupError, match="ユーザー名"):
+        render_shutdown_sudoers(username)
 
 
 def test_rendered_units_are_quoted_and_have_no_unresolved_placeholders(tmp_path: Path):

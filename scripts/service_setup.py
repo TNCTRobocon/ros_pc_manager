@@ -357,6 +357,16 @@ def systemd_escape_path(value: str | Path) -> str:
     return "".join(escaped)
 
 
+def render_shutdown_sudoers(username: str) -> str:
+    """Render the narrowly scoped sudoers rule used by the Agent shutdown API."""
+    if not re.fullmatch(r"[a-z_][a-z0-9_.-]*\$?", username):
+        raise SetupError(f"sudoersに使用できないユーザー名です: {username!r}")
+    return (
+        f"{MANAGED_MARKER}\n"
+        f"{username} ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff\n"
+    )
+
+
 def render_unit(kind: str, root: Path) -> str:
     if kind not in {"agent", "server"}:
         raise SetupError(f"不明なサービス種別です: {kind}")
@@ -400,10 +410,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="ROS PC Manager service setup helper")
     parser.add_argument(
         "action",
-        choices=("prepare-agent", "validate-agent", "prepare-server", "render-agent", "render-server"),
+        choices=(
+            "prepare-agent",
+            "validate-agent",
+            "prepare-server",
+            "render-agent",
+            "render-server",
+            "render-shutdown-sudoers",
+        ),
     )
     parser.add_argument("--root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--user", help="Linux account for the shutdown sudoers rule.")
     args = parser.parse_args()
     root = args.root.resolve()
 
@@ -420,6 +438,11 @@ def main() -> int:
                 raise SetupError("--outputを指定してください。")
             kind = "agent" if args.action == "render-agent" else "server"
             args.output.write_text(render_unit(kind, root), encoding="utf-8")
+            args.output.chmod(0o600)
+        elif args.action == "render-shutdown-sudoers":
+            if args.output is None or not args.user:
+                raise SetupError("--outputと--userを指定してください。")
+            args.output.write_text(render_shutdown_sudoers(args.user), encoding="utf-8")
             args.output.chmod(0o600)
         return 0
     except SetupError as exc:

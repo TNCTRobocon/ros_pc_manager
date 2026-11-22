@@ -35,6 +35,10 @@ tmp_unit="$tmp_dir/$SERVICE"
 
 systemd-analyze verify "$tmp_unit" || fail "生成したsystemd設定の検証に失敗しました。"
 sudo -v
+
+# Grant the Agent account only passwordless permission to power off this PC.
+"$ROOT/scripts/setup_shutdown_permission.sh"
+
 if sudo test -L "$UNIT_PATH"; then
   fail "$UNIT_PATH はシンボリックリンクです。自動上書きしません。"
 fi

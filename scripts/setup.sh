@@ -17,7 +17,7 @@ cat <<'EOF'
 ROS PC Manager Agent setup complete.
 
 Next:
-  ./scripts/setup_agent_service.sh  # create config, install systemd, enable auto-start and start Agent
+  ./scripts/setup_agent_service.sh  # create config, grant poweroff permission, install systemd, enable auto-start and start Agent
   ./scripts/show_agent_pairing.sh   # print a one-time QR code for smartphone pairing
   ./scripts/show_agent_token.sh     # display the Agent Token for manual pairing
 
